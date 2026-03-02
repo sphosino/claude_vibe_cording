@@ -1,0 +1,1707 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>🗡️ ダンジョン・オブ・ドゥーム</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323:wght@400&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --panel: #1a1a28;
+    --border: #2a2a45;
+    --gold: #ffd700;
+    --red: #ff3040;
+    --green: #00ff88;
+    --blue: #4488ff;
+    --purple: #cc44ff;
+    --orange: #ff8800;
+    --cyan: #00ffdd;
+    --text: #e0e0ff;
+    --dim: #6060a0;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'VT323', monospace;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    overflow-y: auto;
+  }
+
+  #title-screen {
+    text-align: center;
+    animation: fadeIn 1s ease;
+  }
+
+  #title-screen h1 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 2.2em;
+    color: var(--gold);
+    text-shadow: 0 0 20px var(--gold), 0 0 40px rgba(255,215,0,0.3);
+    margin-bottom: 0.5em;
+    animation: pulse 2s infinite;
+  }
+
+  #title-screen .subtitle {
+    font-size: 1.8em;
+    color: var(--dim);
+    margin-bottom: 2em;
+  }
+
+  #title-screen .start-btn {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 1em;
+    background: none;
+    border: 3px solid var(--gold);
+    color: var(--gold);
+    padding: 15px 30px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-shadow: 0 0 10px var(--gold);
+    box-shadow: 0 0 20px rgba(255,215,0,0.2);
+  }
+
+  #title-screen .start-btn:hover {
+    background: rgba(255,215,0,0.1);
+    box-shadow: 0 0 30px rgba(255,215,0,0.4);
+    transform: scale(1.05);
+  }
+
+  #game-screen {
+    display: none;
+    width: 100vw;
+    min-height: 100vh;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    padding: 8px 10px;
+    overflow-y: auto;
+  }
+
+  #top-bar {
+    display: flex;
+    gap: 20px;
+    align-items: center;
+    font-size: 1.4em;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .stat-box {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    padding: 6px 14px;
+    font-size: 1.1em;
+  }
+
+  .stat-box.floor-box { border-color: var(--gold); color: var(--gold); font-size: 1.4em; padding: 6px 20px; }
+
+  #hp-bar-wrap { display: flex; align-items: center; gap: 8px; }
+  #hp-bar-bg { width: 120px; height: 14px; background: #300; border: 2px solid var(--red); }
+  #hp-bar { height: 100%; background: var(--red); transition: width 0.3s; box-shadow: 0 0 8px var(--red); }
+  #exp-bar-bg { width: 80px; height: 14px; background: #030; border: 2px solid var(--green); }
+  #exp-bar { height: 100%; background: var(--green); transition: width 0.3s; }
+
+  #main-area {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  #canvas-wrap {
+    position: relative;
+    border: 3px solid var(--border);
+    box-shadow: 0 0 30px rgba(68,136,255,0.15);
+  }
+
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+
+  #side-panel {
+    width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 450px;
+  }
+
+  #inv-list {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .panel-box {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    padding: 10px;
+    font-size: 1.2em;
+  }
+
+  .panel-box h3 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 0.55em;
+    color: var(--gold);
+    margin-bottom: 8px;
+    text-align: center;
+  }
+
+  #log-box {
+    background: var(--surface);
+    border: 2px solid var(--border);
+    padding: 8px;
+    font-size: 1.2em;
+    height: 120px;
+    overflow-y: auto;
+    flex-shrink: 0;
+    width: 100%;
+    max-width: 680px;
+  }
+
+  .log-line { 
+    padding: 1px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.04);
+  }
+  .log-dmg { color: var(--red); }
+  .log-heal { color: var(--green); }
+  .log-item { color: var(--gold); }
+  .log-level { color: var(--purple); }
+  .log-info { color: var(--cyan); }
+
+  #controls {
+    font-size: 1.1em;
+    color: var(--dim);
+    text-align: center;
+  }
+
+  .item-slot {
+    padding: 4px;
+    border: 1px solid var(--border);
+    margin-bottom: 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .item-slot:hover { background: rgba(255,255,255,0.05); }
+  .item-slot.weapon { color: var(--red); }
+  .item-slot.armor { color: var(--blue); }
+  .item-slot.potion { color: var(--green); }
+  .item-slot.bomb { color: var(--orange); }
+  .item-slot.scroll-item { color: var(--gold); }
+  .item-slot:hover { background: rgba(255,255,255,0.08); transform: translateX(2px); transition: all 0.1s; }
+  .item-slot.inv-selected {
+    background: rgba(255,215,0,0.15) !important;
+    border-color: var(--gold) !important;
+    color: var(--gold) !important;
+    transform: translateX(4px);
+  }
+  #inv-list.inv-active {
+    border: 1px solid var(--gold);
+    box-shadow: 0 0 8px rgba(255,215,0,0.3);
+  }
+
+  #overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.85);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    z-index: 100;
+  }
+
+  #overlay h2 {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 2em;
+    margin-bottom: 0.5em;
+  }
+
+  #overlay p { font-size: 1.6em; color: var(--dim); margin: 5px 0; }
+
+  #overlay button {
+    font-family: 'Press Start 2P', monospace;
+    font-size: 0.8em;
+    background: none;
+    border: 2px solid var(--gold);
+    color: var(--gold);
+    padding: 12px 24px;
+    cursor: pointer;
+    margin-top: 20px;
+  }
+
+  #overlay button:hover { background: rgba(255,215,0,0.1); }
+
+  @keyframes pulse {
+    0%, 100% { text-shadow: 0 0 20px var(--gold), 0 0 40px rgba(255,215,0,0.3); }
+    50% { text-shadow: 0 0 30px var(--gold), 0 0 60px rgba(255,215,0,0.5); }
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: none; } }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-4px); }
+    40% { transform: translateX(4px); }
+    60% { transform: translateX(-3px); }
+    80% { transform: translateX(3px); }
+  }
+  .shake { animation: shake 0.3s; }
+  @keyframes miasma-pulse {
+    0%, 100% { border-color: var(--red); box-shadow: 0 0 8px rgba(255,0,0,0.3); }
+    50%       { border-color: #ff8800;   box-shadow: 0 0 20px rgba(255,80,0,0.6); }
+  }
+  .miasma-warning { animation: miasma-pulse 0.8s infinite; }
+  #miasma-bar.danger { background: var(--red) !important; box-shadow: 0 0 12px var(--red) !important; }
+</style>
+</head>
+<body>
+
+<div id="title-screen">
+  <h1>⚔️ DUNGEON<br>OF DOOM ⚔️</h1>
+  <p class="subtitle">〜 地下最深部の魔王を倒せ！ 〜</p>
+  <p style="font-size:1.4em; color:#6060a0; margin-bottom: 1.5em;">
+    WASD / 矢印キー で移動<br>
+    アイテムを拾って強くなれ！<br>
+    全10フロアを制覇せよ！
+  </p>
+  <button class="start-btn" onclick="startGame()">▶ START</button>
+</div>
+
+<div id="game-screen">
+  <div id="top-bar">
+    <div class="stat-box floor-box">⬇ FLOOR <span id="floor-num">1</span></div>
+    <div class="stat-box" style="color:var(--red)">
+      ❤️ HP
+      <div id="hp-bar-wrap">
+        <div id="hp-bar-bg"><div id="hp-bar" style="width:100%"></div></div>
+        <span id="hp-text">20/20</span>
+      </div>
+    </div>
+    <div class="stat-box" style="color:var(--green)">
+      Lv<span id="lv">1</span>
+      <div id="hp-bar-wrap">
+        <div id="exp-bar-bg"><div id="exp-bar" style="width:0%"></div></div>
+      </div>
+    </div>
+    <div class="stat-box" style="color:var(--orange)">⚔️ ATK <span id="atk-stat">5</span></div>
+    <div class="stat-box" style="color:var(--blue)">🛡 DEF <span id="def-stat">0</span></div>
+    <div class="stat-box" style="color:var(--gold)">💰 <span id="gold-stat">0</span>G</div>
+    <div class="stat-box" id="hunger-box" style="color:#ffaa44">
+      🍖 満腹
+      <div id="hp-bar-wrap">
+        <div id="hunger-bar-bg" style="width:100px; height:14px; background:#221100; border:2px solid #ffaa44">
+          <div id="hunger-bar" style="height:100%; background:#ffaa44; transition:width 0.3s;"></div>
+        </div>
+        <span id="hunger-text">😊</span>
+      </div>
+    </div>
+    <div class="stat-box" id="miasma-box" style="color:var(--purple)">
+      🌫 瘴気
+      <div id="hp-bar-wrap">
+        <div id="miasma-bar-bg" style="width:120px; height:14px; background:#1a0028; border:2px solid var(--purple)">
+          <div id="miasma-bar" style="height:100%; background:var(--purple); transition:width 0.3s; box-shadow:0 0 8px var(--purple)"></div>
+        </div>
+        <span id="miasma-text">120</span>
+      </div>
+    </div>
+  </div>
+
+  <div id="main-area">
+    <div id="canvas-wrap">
+      <canvas id="c" width="560" height="448"></canvas>
+    </div>
+    <div id="side-panel">
+      <div class="panel-box">
+        <h3 id="inv-title">🎒 INVENTORY</h3>
+        <div id="inv-list">Empty</div>
+      </div>
+      <div class="panel-box" style="font-size:1.1em; color:var(--dim)">
+        <div style="margin-bottom:4px; color:var(--gold)">TIPS</div>
+        <div id="tip-text"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="log-box"></div>
+  <div id="controls">← → ↑ ↓ / WASD: 移動 &nbsp;|&nbsp; [I]: インベントリ &nbsp;|&nbsp; [Enter/Space]: 調べる</div>
+</div>
+
+<div id="overlay">
+  <h2 id="overlay-title"></h2>
+  <p id="overlay-sub1"></p>
+  <p id="overlay-sub2"></p>
+  <button onclick="startGame()">🔄 もう一度</button>
+</div>
+
+<script>
+// ===== GAME CONSTANTS =====
+const TILE = 28;
+const COLS = 20;
+const ROWS = 16;
+const W = COLS * TILE;
+const H = ROWS * TILE;
+
+// Tile types
+const WALL = 0, FLOOR = 1, STAIRS = 2, CHEST = 3, TRAP = 4;
+
+// Colors
+const CLR = {
+  wall: '#1a1a2e', wallLit: '#252540', floor: '#0d0d18', floorLit: '#161628',
+  stairs: '#8844ff', chest: '#ffd700', trap: '#ff4400',
+  player: '#00ffdd', playerGlow: 'rgba(0,255,221,0.4)',
+  enemy: '#ff3040', enemyGlow: 'rgba(255,48,64,0.4)',
+  boss: '#ff44ff', bossGlow: 'rgba(255,68,255,0.5)',
+  item: '#00ff88',
+  grid: 'rgba(255,255,255,0.02)',
+  text: '#e0e0ff',
+  explored: 'rgba(255,255,255,0.0)',
+  light: 'rgba(255,200,100,0.04)',
+};
+
+// ===== STATE =====
+let G = {}; // game state
+
+function initState() {
+  return {
+    floor: 1,
+    player: {
+      x: 1, y: 1,
+      hp: 45, maxHp: 45,
+      baseAtk: 6, baseDef: 1,  // ベース値（永続強化で増える）
+      atk: 6, def: 1,           // 実効値（満腹度で変動）
+      lv: 1, exp: 0, expNext: 10,
+      gold: 0,
+      hunger: 70,               // 満腹度 0〜100、70（普通）でスタート
+      inv: [{ type: 'potion', name: 'ポーション', heal: 20, col: '#00ff88', icon: '🧪' },
+            { type: 'food', name: '食料', col: '#ffaa44', icon: '🍖' }],
+      weapon: null, armor: null,
+    },
+    map: [], enemies: [], items: [],
+    explored: [],
+    turn: 0,
+    miasmaMax: 120,
+    miasmaLeft: 120,
+    miasmaOver: 0,
+    animQueue: [],
+    msg: [],
+  };
+}
+
+// ===== MAP GENERATION =====
+function genMap(floor) {
+  const map = Array.from({length: ROWS}, () => Array(COLS).fill(WALL));
+  const rooms = [];
+
+  // Place rooms
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const rw = 3 + Math.floor(Math.random() * 5);
+    const rh = 3 + Math.floor(Math.random() * 4);
+    const rx = 1 + Math.floor(Math.random() * (COLS - rw - 2));
+    const ry = 1 + Math.floor(Math.random() * (ROWS - rh - 2));
+    
+    // Check overlap
+    let ok = true;
+    for (const r of rooms) {
+      if (rx < r.x + r.w + 1 && rx + rw + 1 > r.x && ry < r.y + r.h + 1 && ry + rh + 1 > r.y) {
+        ok = false; break;
+      }
+    }
+    if (ok) {
+      rooms.push({x: rx, y: ry, w: rw, h: rh});
+      for (let y = ry; y < ry + rh; y++)
+        for (let x = rx; x < rx + rw; x++)
+          map[y][x] = FLOOR;
+    }
+  }
+
+  // Connect rooms with corridors
+  for (let i = 1; i < rooms.length; i++) {
+    const a = rooms[i-1], b = rooms[i];
+    const ax = Math.floor(a.x + a.w/2), ay = Math.floor(a.y + a.h/2);
+    const bx = Math.floor(b.x + b.w/2), by = Math.floor(b.y + b.h/2);
+    let cx = ax, cy = ay;
+    while (cx !== bx) { map[cy][cx] = FLOOR; cx += cx < bx ? 1 : -1; }
+    while (cy !== by) { map[cy][cx] = FLOOR; cy += cy < by ? 1 : -1; }
+  }
+
+  // Stairs
+  const lastRoom = rooms[rooms.length - 1];
+  const sx = Math.floor(lastRoom.x + lastRoom.w/2);
+  const sy = Math.floor(lastRoom.y + lastRoom.h/2);
+  map[sy][sx] = STAIRS;
+
+  // Player start
+  const firstRoom = rooms[0];
+  const px = Math.floor(firstRoom.x + firstRoom.w/2);
+  const py = Math.floor(firstRoom.y + firstRoom.h/2);
+
+  // Chests
+  const chests = [];
+  for (let i = 1; i < rooms.length - 1 && i < 6; i++) {
+    if (Math.random() < 0.75) {  // was 0.6
+      const r = rooms[i];
+      const cx2 = r.x + Math.floor(Math.random() * r.w);
+      const cy2 = r.y + Math.floor(Math.random() * r.h);
+      map[cy2][cx2] = CHEST;
+      chests.push({x: cx2, y: cy2});
+    }
+  }
+
+  // Traps
+  for (const r of rooms.slice(1)) {
+    if (Math.random() < 0.4) {  // 0.3→0.4
+      const tx = r.x + 1 + Math.floor(Math.random() * Math.max(1, r.w - 2));
+      const ty = r.y + 1 + Math.floor(Math.random() * Math.max(1, r.h - 2));
+      if (map[ty][tx] === FLOOR) map[ty][tx] = TRAP;
+    }
+  }
+
+  // Enemies
+  const enemies = [];
+  const isBossFloor = floor === 10;
+  for (const r of rooms.slice(1)) {
+    const isLastRoom = r === lastRoom;
+
+    // Boss floor: last room gets exactly the boss + 0~1 adds; other rooms normal
+    if (isBossFloor && isLastRoom) {
+      // Boss always spawns in center of last room
+      const bx = Math.floor(r.x + r.w / 2);
+      const by = Math.floor(r.y + r.h / 2);
+      enemies.push(createEnemy(bx, by, floor, true));
+      continue;
+    }
+
+    const count = Math.floor(Math.random() * 3) + 1;  // 1~3 (was 1~2)
+    for (let i = 0; i < count; i++) {
+      let ex, ey, tries = 0;
+      do {
+        ex = r.x + Math.floor(Math.random() * r.w);
+        ey = r.y + Math.floor(Math.random() * r.h);
+        tries++;
+      } while ((map[ey][ex] !== FLOOR || (ex === px && ey === py)) && tries < 20);
+      if (map[ey][ex] === FLOOR) enemies.push(createEnemy(ex, ey, floor, false));
+    }
+  }
+
+  // Floor items
+  const floorItems = [];
+  for (const r of rooms.slice(2)) {
+    if (Math.random() < 0.45) {  // 0.6→0.45
+      const ix = r.x + Math.floor(Math.random() * r.w);
+      const iy = r.y + Math.floor(Math.random() * r.h);
+      if (map[iy][ix] === FLOOR) {
+        floorItems.push(genItem(floor, ix, iy));
+      }
+    }
+  }
+
+  const explored = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+
+  return { map, px, py, enemies, chests, floorItems, explored };
+}
+
+function createEnemy(x, y, floor, isBoss) {
+  // AI styles: chase=執着追跡, patrol=徘徊, coward=臆病(半HP逃走), ambush=待ち伏せ
+  const types = [
+    { name: 'スライム',   glyph: 's', col: '#44ff44', hp: 5,  atk: 2,  def: 0, exp: 3,  gold: 2,
+      sight: 3, chaseLimit: 2, moveChance: 0.5, style: 'patrol', ghost: false },
+    { name: 'ゴブリン',  glyph: 'g', col: '#ff8800', hp: 8,  atk: 4,  def: 1, exp: 5,  gold: 5,
+      sight: 5, chaseLimit: 4, moveChance: 1.0, style: 'coward', ghost: false },
+    { name: 'スケルトン', glyph: 'S', col: '#cccccc', hp: 12, atk: 5,  def: 2, exp: 8,  gold: 8,
+      sight: 4, chaseLimit: 6, moveChance: 0.8, style: 'patrol', ghost: false },
+    { name: 'ゴースト',  glyph: 'G', col: '#aaddff', hp: 14, atk: 9,  def: 1, exp: 14, gold: 10,
+      sight: 8, chaseLimit: 99, moveChance: 1.0, style: 'chase', ghost: true },
+    { name: 'オーク',    glyph: 'O', col: '#00aa44', hp: 18, atk: 7,  def: 3, exp: 12, gold: 12,
+      sight: 4, chaseLimit: 8, moveChance: 1.0, style: 'chase', ghost: false },
+    { name: 'デーモン',  glyph: 'D', col: '#ff2244', hp: 25, atk: 10, def: 4, exp: 20, gold: 20,
+      sight: 6, chaseLimit: 3, moveChance: 1.0, style: 'ambush', ghost: false },
+  ];
+  
+  if (isBoss) {
+    return {
+      x, y, isBoss: true,
+      name: '🔥魔王ドゥーム', glyph: 'B', col: '#ff44ff',
+      maxHp: 700, hp: 700,
+      atk: 28, def: 14,
+      exp: 300, gold: 500,
+      sight: 10, chaseLimit: 999, moveChance: 1.0, style: 'chase',
+      aiState: 'idle', chaseCounter: 0, lastKnown: null,
+      spawnX: x, spawnY: y, patrolDir: [1,0], patrolTimer: 0,
+      phase2: false,       // goes berserk at 50% HP
+      specialCooldown: 0,  // special attack every 3 turns
+    };
+  }
+  
+  const tidx = Math.min(Math.floor(floor / 2), types.length - 1);
+  const spread = Math.floor(Math.random() * Math.min(2, types.length - tidx));
+  const t = types[Math.min(tidx + spread, types.length - 1)];
+  const scale = 1 + (floor - 1) * 0.18;  // 0.13→0.18
+  
+  return {
+    x, y, isBoss: false,
+    name: t.name, glyph: t.glyph, col: t.col,
+    maxHp: Math.floor(t.hp * scale), hp: Math.floor(t.hp * scale),
+    atk: Math.floor(t.atk * scale), def: Math.floor(t.def * scale),
+    exp: Math.floor(t.exp * scale), gold: Math.floor(t.gold * scale),
+    sight: t.sight, chaseLimit: t.chaseLimit,
+    moveChance: t.moveChance, style: t.style,
+    ghost: t.ghost || false,
+    aiState: 'idle', chaseCounter: 0, lastKnown: null,
+    spawnX: x, spawnY: y,
+    patrolDir: [Math.random() < 0.5 ? 1 : -1, 0],
+    patrolTimer: 0,
+  };
+}
+
+function genItem(floor, x, y) {
+  const r = Math.random();
+  if (r < 0.30) return { type: 'potion',      name: 'ポーション',   x, y, heal: 12 + floor * 2, col: '#00ff88', icon: '🧪' };
+  if (r < 0.42) return { type: 'potion_s',    name: '小ポーション', x, y, heal: 6 + floor,      col: '#44cc88', icon: '🧪' };
+  if (r < 0.55) {
+    const atk = 2 + Math.floor(Math.random() * floor * 2);
+    return { type: 'weapon', name: `剣+${atk}`, x, y, atk, col: '#ff8844' };
+  }
+  if (r < 0.68) {
+    const def = 1 + Math.floor(Math.random() * Math.ceil(floor * 1.5));
+    return { type: 'armor', name: `鎧+${def}`, x, y, def, col: '#4488ff' };
+  }
+  if (r < 0.78) {
+    const power = 18 + floor * 2;
+    return { type: 'bomb',       name: '爆弾',       x, y, power, col: '#ff6600', icon: '💣' };
+  }
+  if (r < 0.87) {
+    const boost = 3 + Math.floor(floor * 1.5);
+    return { type: 'scroll_atk', name: '攻撃の巻物', x, y, boost, col: '#ffcc00', icon: '📜' };
+  }
+  if (r < 0.85) {
+    const boost = 2 + Math.floor(floor);
+    return { type: 'ring_def', name: `防御の指輪+${boost}`, x, y, boost, col: '#cc88ff', icon: '💍', stat: 'def' };
+  }
+  return { type: 'food', name: '食料', x, y, col: '#ffaa44', icon: '🍖' };
+}
+
+function genChestItem(floor) {
+  const r = Math.random();
+  if (r < 0.22) return { type: 'potion_l',    name: '大ポーション', heal: 35 + floor * 5, col: '#00ffaa', icon: '🧪' };
+  if (r < 0.38) {
+    const atk = 3 + Math.floor(Math.random() * floor * 3);
+    return { type: 'weapon', name: `魔剣+${atk}`, atk, col: '#ff4400' };
+  }
+  if (r < 0.52) {
+    const def = 2 + Math.floor(Math.random() * Math.ceil(floor * 2));
+    return { type: 'armor', name: `魔法鎧+${def}`, def, col: '#44aaff' };
+  }
+  if (r < 0.64) {
+    const power = 15 + floor * 5;
+    return { type: 'superbomb',   name: '超爆弾',     power, col: '#ff3300', icon: '💣' };
+  }
+  if (r < 0.74) {
+    const boost = 6 + Math.floor(floor * 2);
+    return { type: 'scroll_str', name: '強化の巻物', boost, col: '#ffe000', icon: '📜' };
+  }
+  if (r < 0.84) {
+    const boost = 3 + Math.floor(floor * 1.5);
+    return { type: 'ring_atk', name: `力の指輪+${boost}`, boost, col: '#ff88ff', icon: '💍', stat: 'atk' };
+  }
+  if (r < 0.92) {
+    const maxHpUp = 15 + floor * 3;
+    return { type: 'elixir', name: '不死の霊薬', maxHpUp, col: '#ff66ff', icon: '✨' };
+  }
+  return { type: 'scroll_heal', name: '全回復の巻物', col: '#aaffcc', icon: '📜' };
+}
+
+// ===== RENDERING =====
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function drawGame() {
+  ctx.fillStyle = '#080810';
+  ctx.fillRect(0, 0, W, H);
+  
+  const p = G.player;
+  const visRadius = 6;
+  
+  // Compute visibility
+  const visible = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+  for (let dy = -visRadius; dy <= visRadius; dy++) {
+    for (let dx = -visRadius; dx <= visRadius; dx++) {
+      const nx = p.x + dx, ny = p.y + dy;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+      if (dx*dx + dy*dy > visRadius*visRadius) continue;
+      // Simple raycasting
+      if (hasLOS(p.x, p.y, nx, ny)) {
+        visible[ny][nx] = true;
+        G.explored[ny][nx] = true;
+      }
+    }
+  }
+  
+  // Draw tiles
+  for (let y = 0; y < ROWS; y++) {
+    for (let x = 0; x < COLS; x++) {
+      const tile = G.map[y][x];
+      const vis = visible[y][x];
+      const exp = G.explored[y][x];
+      if (!exp) continue;
+      
+      const px2 = x * TILE, py2 = y * TILE;
+      
+      if (tile === WALL) {
+        ctx.fillStyle = vis ? '#1c1c30' : '#0e0e1a';
+        ctx.fillRect(px2, py2, TILE, TILE);
+        if (vis) {
+          ctx.strokeStyle = '#2a2a50';
+          ctx.strokeRect(px2 + 0.5, py2 + 0.5, TILE - 1, TILE - 1);
+        }
+      } else {
+        ctx.fillStyle = vis ? '#121220' : '#0a0a14';
+        ctx.fillRect(px2, py2, TILE, TILE);
+        
+        if (vis) {
+          // Floor grid
+          ctx.strokeStyle = 'rgba(255,255,255,0.03)';
+          ctx.strokeRect(px2 + 0.5, py2 + 0.5, TILE - 1, TILE - 1);
+          
+          if (tile === STAIRS) {
+            drawGlyph(px2, py2, '⬇', '#8844ff');
+          } else if (tile === CHEST) {
+            drawGlyph(px2, py2, '📦', '#ffd700');
+          } else if (tile === TRAP) {
+            // Traps are hidden until stepped on
+          }
+        }
+      }
+    }
+  }
+  
+  // Light effect around player
+  if (visible[p.y]?.[p.x]) {
+    const grd = ctx.createRadialGradient(p.x*TILE+TILE/2, p.y*TILE+TILE/2, 0, p.x*TILE+TILE/2, p.y*TILE+TILE/2, visRadius*TILE);
+    grd.addColorStop(0, 'rgba(255,200,100,0.08)');
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+  }
+  
+  // Draw floor items
+  for (const item of G.items) {
+    if (!visible[item.y]?.[item.x]) continue;
+    const icon = item.icon || (item.type === 'potion' ? '🧪' : item.type === 'weapon' ? '⚔️' : item.type === 'armor' ? '🛡️' : '📦');
+    drawGlyph(item.x*TILE, item.y*TILE, icon, item.col);
+  }
+  
+  // Draw enemies
+  for (const e of G.enemies) {
+    // ゴーストは壁の中にいても薄く見える
+    const isInWall = e.ghost && G.map[e.y]?.[e.x] === WALL;
+    if (!visible[e.y]?.[e.x] && !isInWall) continue;
+    const px2 = e.x * TILE, py2 = e.y * TILE;
+
+    // ゴーストは半透明＋青白いglow
+    ctx.globalAlpha = e.ghost ? (isInWall ? 0.35 : 0.75) : 1.0;
+    ctx.shadowBlur = 15;
+    ctx.shadowColor = e.ghost ? '#aaddff' : e.isBoss ? '#ff44ff' : '#ff3040';
+    ctx.fillStyle = e.col;
+    ctx.font = `${TILE-4}px VT323`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(e.glyph.toUpperCase(), px2 + TILE/2, py2 + TILE/2);
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1.0;
+    
+    // HP bar
+    const hpFrac = e.hp / e.maxHp;
+    ctx.fillStyle = '#300';
+    ctx.fillRect(px2, py2 - 5, TILE, 4);
+    ctx.fillStyle = hpFrac > 0.5 ? '#00ff44' : hpFrac > 0.25 ? '#ffaa00' : '#ff3040';
+    ctx.fillRect(px2, py2 - 5, TILE * hpFrac, 4);
+
+    // AI state indicator
+    if (e.aiState === 'chase') {
+      ctx.fillStyle = '#ff4400';
+      ctx.font = '10px VT323';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', px2 + TILE - 4, py2 + 2);
+    } else if (e.aiState === 'return' || e.aiState === 'alert') {
+      ctx.fillStyle = '#ffcc00';
+      ctx.font = '10px VT323';
+      ctx.textAlign = 'center';
+      ctx.fillText('?', px2 + TILE - 4, py2 + 2);
+    }
+  }
+  
+  // Draw click target indicator
+  if (clickTarget && G.explored[clickTarget.y]?.[clickTarget.x]) {
+    const tx = clickTarget.x * TILE, ty = clickTarget.y * TILE;
+    ctx.strokeStyle = 'rgba(255,255,100,0.7)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(tx + 2, ty + 2, TILE - 4, TILE - 4);
+    ctx.lineWidth = 1;
+  }
+
+  // Boss HP bar at top of canvas
+  const boss = G.enemies.find(e => e.isBoss);
+  if (boss) {
+    const bw = W - 40;
+    const frac = boss.hp / boss.maxHp;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(20, 8, bw, 16);
+    ctx.fillStyle = boss.phase2 ? '#ff0000' : '#ff44ff';
+    ctx.fillRect(20, 8, bw * frac, 16);
+    ctx.strokeStyle = boss.phase2 ? '#ff0000' : '#ff44ff';
+    ctx.strokeRect(20, 8, bw, 16);
+    ctx.fillStyle = '#fff';
+    ctx.font = '11px VT323';
+    ctx.textAlign = 'center';
+    ctx.fillText(`🔥 魔王ドゥーム  ${boss.hp}/${boss.maxHp}${boss.phase2 ? '  ⚡BERSERK' : ''}`, W/2, 21);
+  }
+
+  // Draw player
+  const ppx = p.x * TILE, ppy = p.y * TILE;
+  ctx.shadowBlur = 20;
+  ctx.shadowColor = '#00ffdd';
+  ctx.fillStyle = '#00ffdd';
+  ctx.font = `${TILE}px VT323`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('@', ppx + TILE/2, ppy + TILE/2);
+  ctx.shadowBlur = 0;
+  
+  // Coord hint for stairs
+  if (G.map[p.y]?.[p.x] === STAIRS) {
+    ctx.fillStyle = '#8844ff';
+    ctx.font = '12px VT323';
+    ctx.fillText('Enterで次へ', ppx + TILE/2, ppy - 5);
+  }
+}
+
+function drawGlyph(px, py, char, col) {
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = col;
+  ctx.fillStyle = col;
+  ctx.font = `${TILE-2}px VT323`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(char, px + TILE/2, py + TILE/2);
+  ctx.shadowBlur = 0;
+}
+
+function hasLOS(x1, y1, x2, y2) {
+  let dx = Math.abs(x2 - x1), dy = Math.abs(y2 - y1);
+  let sx = x1 < x2 ? 1 : -1, sy = y1 < y2 ? 1 : -1;
+  let err = dx - dy;
+  let cx = x1, cy = y1;
+  while (cx !== x2 || cy !== y2) {
+    if (G.map[cy]?.[cx] === WALL) return false;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; cx += sx; }
+    if (e2 < dx) { err += dx; cy += sy; }
+  }
+  return true;
+}
+
+// ===== LOGGING =====
+function log(msg, cls='') {
+  const box = document.getElementById('log-box');
+  const d = document.createElement('div');
+  d.className = 'log-line ' + cls;
+  d.textContent = msg;
+  box.prepend(d);
+  if (box.children.length > 30) box.lastChild.remove();
+}
+
+// ===== UPDATE UI =====
+function updateUI() {
+  const p = G.player;
+  document.getElementById('floor-num').textContent = G.floor;
+  document.getElementById('lv').textContent = p.lv;
+  document.getElementById('hp-text').textContent = `${p.hp}/${p.maxHp}`;
+  document.getElementById('hp-bar').style.width = `${(p.hp/p.maxHp)*100}%`;
+  document.getElementById('hp-bar').style.boxShadow = p.hp === p.maxHp ? '0 0 8px #00ff88' : '0 0 8px var(--red)';
+  document.getElementById('exp-bar').style.width = `${(p.exp/p.expNext)*100}%`;
+  document.getElementById('atk-stat').textContent = p.atk;
+  document.getElementById('def-stat').textContent = p.def;
+  document.getElementById('gold-stat').textContent = p.gold;
+
+  // Miasma bar
+  const mFrac = 1 - Math.max(0, G.miasmaLeft / G.miasmaMax);
+  document.getElementById('miasma-bar').style.width = `${mFrac * 100}%`;
+  document.getElementById('miasma-text').textContent = G.miasmaLeft > 0 ? G.miasmaLeft : `超過${G.miasmaOver}`;
+
+  // Hunger bar
+  const h = G.player.hunger;
+  const hCol = h <= 10 ? '#ff3040' : h <= 30 ? '#ff8800' : h <= 70 ? '#ffaa44' : h <= 90 ? '#88ff88' : '#44ffaa';
+  document.getElementById('hunger-bar').style.width = `${h}%`;
+  document.getElementById('hunger-bar').style.background = hCol;
+  document.getElementById('hunger-text').textContent = HUNGER_LABEL[hungerStage(h)];
+  
+  document.getElementById('inv-title').textContent = invMode ? '🎒 ↑↓選択 Enter使用' : '🎒 INVENTORY';
+  const invEl = document.getElementById('inv-list');
+  invEl.innerHTML = '';
+  if (invMode) {
+    invEl.classList.add('inv-active');
+  } else {
+    invEl.classList.remove('inv-active');
+  }
+
+  if (p.weapon) {
+    const d = document.createElement('div');
+    d.className = 'item-slot weapon';
+    d.textContent = `⚔️ ${p.weapon.name}`;
+    d.title = '装備中の武器';
+    invEl.appendChild(d);
+  }
+  if (p.armor) {
+    const d = document.createElement('div');
+    d.className = 'item-slot armor';
+    d.textContent = `🛡️ ${p.armor.name}`;
+    d.title = '装備中の防具';
+    invEl.appendChild(d);
+  }
+
+  // Group usable items by type
+  const USABLE_GROUPS = [
+    { type: 'potion_l',    icon: '🧪', col: '#00ffaa' },
+    { type: 'potion',      icon: '🧪', col: '#00ff88' },
+    { type: 'potion_s',    icon: '🧪', col: '#44cc88' },
+    { type: 'food',        icon: '🍖', col: '#ffaa44' },
+    { type: 'superbomb',   icon: '💣', col: '#ff3300' },
+    { type: 'bomb',        icon: '💣', col: '#ff6600' },
+    { type: 'scroll_heal', icon: '📜', col: '#aaffcc' },
+    { type: 'scroll_str',  icon: '📜', col: '#ffe000' },
+    { type: 'scroll_atk',  icon: '📜', col: '#ffcc00' },
+    { type: 'elixir',      icon: '✨', col: '#ff66ff' },
+  ];
+
+  let anyUsable = false;
+  for (const g of USABLE_GROUPS) {
+    const stack = p.inv.filter(i => i.type === g.type);
+    if (!stack.length) continue;
+    anyUsable = true;
+    const d = document.createElement('div');
+    d.className = `item-slot ${g.type === 'potion' ? 'potion' : g.type === 'bomb' ? 'bomb' : 'scroll-item'}`;
+    d.style.cursor = 'pointer';
+    d.style.borderColor = stack[0].col;
+    d.title = `クリックで使用: ${stack.map(i=>i.name).join(', ')}`;
+    d.innerHTML = `${g.icon} <span style="color:${stack[0].col}">${stack[0].name}</span>` +
+      (stack.length > 1 ? ` <span style="color:#aaa">×${stack.length}</span>` : '') +
+      ` <span style="color:#555;font-size:0.85em"> ▶</span>`;
+    d.addEventListener('click', () => {
+      const idx = G.player.inv.findIndex(i => i.type === g.type);
+      if (idx >= 0) { useItemAtIndex(idx); }
+    });
+
+    // インベントリモード中はカーソル位置をハイライト
+    if (invMode) {
+      const usable = getUsableItems();
+      const pos = usable.findIndex(u => u.type === g.type);
+      if (pos === invCursor) d.classList.add('inv-selected');
+    }
+
+    invEl.appendChild(d);
+  }
+
+  if (!p.weapon && !p.armor && !anyUsable) {
+    invEl.textContent = '空っぽ';
+  }
+}
+
+// ===== TIPS =====
+const TIPS = [
+  'ポーション🧪はクリックか\n[P]で使えるよ！',
+  '爆弾💣は半径3マスの\n敵を一網打尽！',
+  '攻撃の巻物📜で\nATKが永続アップ！',
+  '霊薬✨でMaxHPが\n大幅に上がる！',
+  '指輪💍は拾うだけで\n永続効果が発動！',
+  '宝箱📦にはレアな\nアイテムが入ってる！',
+  '👻 ゴーストは壁を抜けてくる！\n逃げても無駄！',
+  'ボスは10フロアに！\n万全の準備で挑もう',
+];
+let tipIdx = 0;
+function cycleTip() {
+  document.getElementById('tip-text').textContent = TIPS[tipIdx % TIPS.length];
+  tipIdx++;
+}
+
+// ===== GAME LOGIC =====
+function startGame() {
+  G = initState();
+  document.getElementById('title-screen').style.display = 'none';
+  document.getElementById('game-screen').style.display = 'flex';
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('log-box').innerHTML = '';
+  
+  loadFloor(1);
+  log('⚔️ ダンジョンに入った！魔王を討て！', 'log-info');
+  
+  cycleTip();
+  setInterval(cycleTip, 10000);
+  
+  requestAnimationFrame(loop);
+}
+
+function loadFloor(floor) {
+  G.floor = floor;
+  const data = genMap(floor);
+  G.map = data.map;
+  G.explored = data.explored;
+  G.enemies = data.enemies;
+  G.items = data.floorItems;
+  G.player.x = data.px;
+  G.player.y = data.py;
+  G.turn = 0;
+
+  // 1F=100ターン → 10F=40ターン の直線
+  G.miasmaMax = Math.max(40, Math.round(100 - (floor - 1) * 60 / 9));
+  G.miasmaLeft = G.miasmaMax;
+  G.miasmaOver = 0;
+
+  // Reset miasma bar style
+  document.getElementById('miasma-bar').classList.remove('danger');
+  document.getElementById('miasma-box').classList.remove('miasma-warning');
+
+  // Reveal start area
+  updateExplored();
+  updateUI();
+  log(`📍 ${floor}階に降りた  🌫 瘴気まで${G.miasmaLeft}ターン`, 'log-info');
+}
+
+function updateExplored() {
+  const p = G.player;
+  const r = 6;
+  for (let dy = -r; dy <= r; dy++) {
+    for (let dx = -r; dx <= r; dx++) {
+      const nx = p.x + dx, ny = p.y + dy;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+      if (dx*dx + dy*dy <= r*r && hasLOS(p.x, p.y, nx, ny)) {
+        G.explored[ny][nx] = true;
+      }
+    }
+  }
+}
+
+function tryMove(dx, dy) {
+  const p = G.player;
+  const nx = p.x + dx, ny = p.y + dy;
+  
+  if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return;
+  
+  // Check enemy (壁の中のゴーストは攻撃不可)
+  const enemy = G.enemies.find(e => e.x === nx && e.y === ny);
+  if (enemy) {
+    tryAttackEnemy(enemy);
+    return;
+  }
+
+  if (G.map[ny][nx] === WALL) return;
+  
+  // Move
+  p.x = nx; p.y = ny;
+  
+  // Tile effects
+  const tile = G.map[ny][nx];
+  if (tile === TRAP) {
+    const dmg = Math.max(1, 2 + G.floor - p.def);  // nerfed trap
+    p.hp = Math.max(0, p.hp - dmg);
+    G.map[ny][nx] = FLOOR;
+    log(`🔥 罠！ ${dmg}ダメージ！`, 'log-dmg');
+    if (p.hp <= 0) { gameover(); return; }
+  }
+  
+  // Pick up items
+  const itemIdx = G.items.findIndex(i => i.x === nx && i.y === ny);
+  if (itemIdx >= 0) {
+    const item = G.items.splice(itemIdx, 1)[0];
+    pickupItem(item);
+  }
+  
+  updateExplored();
+  enemyTurn();
+
+  // Passive regen: +1 HP every 5 turns
+  G.turn = (G.turn || 0) + 1;
+  if (G.turn % 8 === 0 && G.player.hp < G.player.maxHp) {  // 5→8ターンに1回
+    G.player.hp = Math.min(G.player.maxHp, G.player.hp + 1);
+  }
+
+  // === HUNGER ===
+  tickHunger();
+
+  // === MIASMA COUNTDOWN ===
+  tickMiasma();
+
+  updateUI();
+}
+
+function tryAttackEnemy(enemy) {
+  if (!enemy) return false;
+  if (enemy.ghost && G.map[enemy.y][enemy.x] === WALL) {
+    log('👻 ゴーストは壁の中では攻撃できない！', 'log-info');
+    return false;
+  }
+  attackEnemy(enemy);
+  enemyTurn();
+  return true;
+}
+
+function attackEnemy(e) {
+  const p = G.player;
+  const dmg = Math.max(1, p.atk - e.def + Math.floor(Math.random() * 4 - 1));
+  e.hp -= dmg;
+  log(`⚔️ ${e.name}に${dmg}ダメージ！ (残${e.hp}HP)`, 'log-dmg');
+
+  // Boss phase 2 trigger
+  if (e.isBoss && !e.phase2 && e.hp <= e.maxHp * 0.5) {
+    e.phase2 = true;
+    e.atk = Math.floor(e.atk * 1.5);
+    e.moveChance = 1.0;
+    e.col = '#ff0000';
+    log('💢 魔王が激怒した！！ ATKが1.5倍になった！！', 'log-dmg');
+    log('☠️ 「貴様ごときに傷つけられるとは……許さん！！」', 'log-dmg');
+  }
+  
+  if (e.hp <= 0) {
+    G.enemies = G.enemies.filter(x => x !== e);
+    p.exp += e.exp;
+    p.gold += e.gold;
+    log(`💀 ${e.name}を倒した！ EXP+${e.exp} Gold+${e.gold}`, 'log-item');
+    
+    checkLevelUp();
+    
+    if (e.isBoss) {
+      victory();
+    }
+  }
+}
+
+function enemyTurn() {
+  const p = G.player;
+
+  for (const e of G.enemies) {
+    // --- moveChance: slow enemies skip turns ---
+    if (Math.random() > e.moveChance) continue;
+
+    const dist = Math.abs(e.x - p.x) + Math.abs(e.y - p.y);
+    const canSee = dist <= e.sight && hasLOS(e.x, e.y, p.x, p.y);
+
+    // ---- coward: run away when below half HP ----
+    if (e.style === 'coward' && e.hp < e.maxHp * 0.5 && canSee) {
+      // Move away from player
+      const dx = e.x - p.x, dy = e.y - p.y;
+      const moves = [
+        [Math.sign(dx) || (Math.random()<0.5?1:-1), 0],
+        [0, Math.sign(dy) || (Math.random()<0.5?1:-1)],
+        [Math.sign(dx), Math.sign(dy)],
+      ];
+      for (const [mx, my] of moves) {
+        const nx = e.x + mx, ny = e.y + my;
+        if (canMoveTo(e, nx, ny)) { e.x = nx; e.y = ny; break; }
+      }
+      e.aiState = 'idle';
+      continue;
+    }
+
+    // ---- ambush: stay still until player very close ----
+    if (e.style === 'ambush' && e.aiState === 'idle') {
+      if (!canSee || dist > 2) continue; // wait motionless
+      // Player stepped close – now activate!
+      e.aiState = 'chase';
+      log(`👁️ ${e.name}が動き出した！`, 'log-dmg');
+    }
+
+    // ---- Update AI state ----
+    if (canSee) {
+      e.aiState = 'chase';
+      e.chaseCounter = e.chaseLimit;
+      e.lastKnown = { x: p.x, y: p.y };
+    } else if (e.aiState === 'chase') {
+      e.chaseCounter--;
+      if (e.chaseCounter <= 0) {
+        e.aiState = e.lastKnown ? 'return' : 'idle';
+      }
+    }
+
+    // ---- Attack if adjacent ----
+    if (dist === 1) {
+      let dmg;
+      if (e.isBoss) {
+        e.specialCooldown = (e.specialCooldown || 0) - 1;
+        if (e.specialCooldown <= 0) {
+          // Special: dark blast, 2x damage
+          dmg = Math.max(1, e.atk * 2 - p.def);
+          e.specialCooldown = e.phase2 ? 2 : 3;
+          log(`💥 魔王の「滅びの波動」！ ${dmg}ダメージ！！`, 'log-dmg');
+        } else {
+          dmg = Math.max(0, e.atk - p.def + Math.floor(Math.random() * 4 - 1));
+          if (dmg > 0) log(`💥 ${e.name}に${dmg}ダメージ！ (残${p.hp}HP)`, 'log-dmg');
+          else log(`🛡️ ${e.name}の攻撃を防いだ！`, 'log-info');
+        }
+      } else {
+        dmg = Math.max(0, e.atk - p.def + Math.floor(Math.random() * 3 - 1));
+        if (dmg > 0) log(`💥 ${e.name}に${dmg}ダメージ！ (残${p.hp}HP)`, 'log-dmg');
+        else log(`🛡️ ${e.name}の攻撃を防いだ！`, 'log-info');
+      }
+      p.hp -= dmg;
+      if (p.hp <= 0) { gameover(); return; }
+      continue;
+    }
+
+    // ---- Movement per state ----
+    if (e.aiState === 'chase' || e.aiState === 'alert') {
+      // Move toward last known position
+      const tx = e.aiState === 'chase' ? p.x : e.lastKnown.x;
+      const ty = e.aiState === 'chase' ? p.y : e.lastKnown.y;
+      moveToward(e, tx, ty);
+
+      // Reached last known but lost player → go idle
+      if (e.aiState !== 'chase' && e.x === e.lastKnown.x && e.y === e.lastKnown.y) {
+        e.aiState = 'idle';
+        e.lastKnown = null;
+      }
+
+    } else if (e.aiState === 'return') {
+      // Head back toward spawn
+      moveToward(e, e.spawnX, e.spawnY);
+      if (e.x === e.spawnX && e.y === e.spawnY) {
+        e.aiState = 'idle';
+        e.lastKnown = null;
+      }
+
+    } else {
+      // idle: patrol / wander
+      e.patrolTimer = (e.patrolTimer || 0) - 1;
+      if (e.patrolTimer > 0) continue; // stand still for a bit
+
+      if (e.style === 'patrol') {
+        // Walk in a direction, bounce off walls
+        const [pdx, pdy] = e.patrolDir;
+        const nx = e.x + pdx, ny = e.y + pdy;
+        if (canMoveTo(e, nx, ny)) {
+          e.x = nx; e.y = ny;
+        } else {
+          // Pick a new random direction
+          const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+          const d = dirs[Math.floor(Math.random() * dirs.length)];
+          e.patrolDir = d;
+          e.patrolTimer = 1 + Math.floor(Math.random() * 3);
+        }
+      } else {
+        // Random wander (30% chance to move)
+        if (Math.random() < 0.3) {
+          const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+          const [rdx, rdy] = dirs[Math.floor(Math.random() * dirs.length)];
+          const nx = e.x + rdx, ny = e.y + rdy;
+          if (canMoveTo(e, nx, ny)) { e.x = nx; e.y = ny; }
+        }
+        e.patrolTimer = 1 + Math.floor(Math.random() * 2);
+      }
+    }
+  }
+}
+
+function canMoveTo(e, nx, ny) {
+  if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return false;
+  if (!e.ghost && G.map[ny][nx] === WALL) return false;  // ゴーストは壁無視
+  if (G.enemies.some(o => o !== e && o.x === nx && o.y === ny)) return false;
+  if (G.player.x === nx && G.player.y === ny) return false;
+  return true;
+}
+
+function moveToward(e, tx, ty) {
+  const dx = tx - e.x, dy = ty - e.y;
+  if (dx === 0 && dy === 0) return;
+  const moves = [];
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    moves.push([Math.sign(dx), 0], [0, Math.sign(dy)], [-Math.sign(dx), 0], [0, -Math.sign(dy)]);
+  } else {
+    moves.push([0, Math.sign(dy)], [Math.sign(dx), 0], [0, -Math.sign(dy)], [-Math.sign(dx), 0]);
+  }
+  for (const [mx, my] of moves) {
+    const nx = e.x + mx, ny = e.y + my;
+    if (canMoveTo(e, nx, ny)) { e.x = nx; e.y = ny; return; }
+  }
+}
+
+function pickupItem(item) {
+  const p = G.player;
+  if (item.type === 'weapon') {
+    if (!p.weapon || item.atk > p.weapon.atk) {
+      const old = p.weapon ? ` (旧:${p.weapon.name}と交換)` : '';
+      p.weapon = item;
+      p.baseAtk = 5 + p.lv + item.atk;
+      recalcStats();
+      log(`⚔️ ${item.name}を装備！ ATK+${item.atk}${old}`, 'log-item');
+    } else {
+      log(`⚔️ ${item.name}を拾ったが弱かった`, 'log-info');
+    }
+  } else if (item.type === 'armor') {
+    if (!p.armor || item.def > p.armor.def) {
+      const old = p.armor ? ` (旧:${p.armor.name}と交換)` : '';
+      p.armor = item;
+      p.baseDef = item.def;
+      recalcStats();
+      log(`🛡️ ${item.name}を装備！ DEF+${item.def}${old}`, 'log-item');
+    } else {
+      log(`🛡️ ${item.name}を拾ったが弱かった`, 'log-info');
+    }
+  } else if (item.type === 'ring_def' || item.type === 'ring_atk') {
+    if (item.stat === 'def' || item.type === 'ring_def') {
+      p.baseDef += item.boost;
+      recalcStats();
+      log(`💍 ${item.name}を装着！ DEF+${item.boost}（永続）`, 'log-item');
+    } else {
+      p.baseAtk += item.boost;
+      recalcStats();
+      log(`💍 ${item.name}を装着！ ATK+${item.boost}（永続）`, 'log-item');
+    }
+  } else {
+    p.inv.push({...item});
+    const icon = item.icon || '🧪';
+    log(`${icon} ${item.name}を拾った！`, 'log-item');
+  }
+  updateUI();
+}
+
+function openChest(x, y) {
+  const item = genChestItem(G.floor);
+  item.x = x; item.y = y;
+  G.map[y][x] = FLOOR;
+  pickupItem(item);
+  log(`📦 宝箱を開けた！ ${item.name}をゲット！`, 'log-item');
+}
+
+function usePotion() { useItemByType('potion'); }
+
+function useItemByType(type) {
+  const p = G.player;
+  const idx = p.inv.findIndex(i => i.type === type);
+  if (idx < 0) { log(`それは持っていない！`, 'log-info'); return; }
+  useItemAtIndex(idx);
+}
+
+function useItemAtIndex(idx) {
+  const p = G.player;
+  const item = p.inv.splice(idx, 1)[0];
+  if (!item) return;
+
+  // ポーション系（全部HP回復）
+  if (['potion', 'potion_s', 'potion_l'].includes(item.type)) {
+    const baseHeal = item.heal + G.floor * 3;
+    // 満腹度で回復量が変わる
+    const healMult = { starving: 0.3, hungry: 0.6, normal: 1.0, full: 1.8, stuffed: 1.3 };
+    const mult = healMult[hungerStage(G.player.hunger)];
+    const heal = Math.floor(baseHeal * mult);
+    const before = p.hp;
+    p.hp = Math.min(p.maxHp, p.hp + heal);
+    const multLabel = mult < 1 ? `（空腹で${Math.floor(mult*100)}%）` : mult > 1 ? '（満腹ボーナス！）' : '';
+    log(`🧪 ${item.name}を使った！ HP+${p.hp - before} ${multLabel}(${p.hp}/${p.maxHp})`, 'log-heal');
+
+  // 爆弾系
+  } else if (item.type === 'bomb' || item.type === 'superbomb') {
+    const hits = G.enemies.filter(e => Math.abs(e.x-p.x)+Math.abs(e.y-p.y) <= 3);
+    const label = item.type === 'superbomb' ? '💥超爆弾' : '💣爆弾';
+    if (!hits.length) { log(`${label}！ …誰もいなかった`, 'log-info'); }
+    else {
+      let killed = 0;
+      for (const e of hits) {
+        const dmg = item.power + Math.floor(Math.random() * 5);
+        e.hp -= dmg;
+        log(`${label} ${e.name}に${dmg}ダメージ！`, 'log-dmg');
+        if (e.hp <= 0) {
+          G.enemies = G.enemies.filter(x => x !== e);
+          p.exp += e.exp; p.gold += e.gold; killed++;
+          checkLevelUp();
+          if (e.isBoss) { victory(); return; }
+        }
+      }
+      if (killed) log(`💥 ${killed}体を爆殺！`, 'log-item');
+    }
+
+  // 巻物系
+  } else if (item.type === 'scroll_heal') {
+    p.hp = p.maxHp;
+    log(`📜 ${item.name}！ HPが全回復！`, 'log-heal');
+
+  } else if (item.type === 'scroll_atk') {
+    const boost = 3 + Math.floor(G.floor * 2.2);
+    p.baseAtk += boost;
+    recalcStats();
+    log(`📜 ${item.name}を読んだ！ ATK+${boost}（永続）`, 'log-item');
+
+  } else if (item.type === 'scroll_str') {
+    const boost = 6 + Math.floor(G.floor * 2.5);
+    p.baseAtk += boost;
+    recalcStats();
+    log(`📜 ${item.name}を読んだ！ ATK+${boost}（永続）`, 'log-item');
+
+  // 食料
+  } else if (item.type === 'food') {
+    const prev = G.player.hunger;
+    G.player.hunger = Math.min(100, G.player.hunger + 40);
+    recalcStats();
+    log(`🍖 食料を食べた！ 満腹度+${G.player.hunger - prev} (${G.player.hunger}/100)`, 'log-heal');
+
+  // 霊薬
+  } else if (item.type === 'elixir') {
+    p.maxHp += item.maxHpUp;
+    p.hp = p.maxHp;
+    log(`✨ 不死の霊薬！ MaxHP+${item.maxHpUp}、HP全回復！`, 'log-level');
+  }
+
+  updateUI();
+}
+
+// ===== HUNGER SYSTEM =====
+function hungerStage(hunger) {
+  if (hunger <= 10) return 'starving';   // 💀 飢餓
+  if (hunger <= 30) return 'hungry';    // 😫 空腹
+  if (hunger <= 70) return 'normal';    // 😊 普通
+  if (hunger <= 90) return 'full';      // 😌 満腹
+  return 'stuffed';                     // 🤢 過食
+}
+
+const HUNGER_LABEL = {
+  starving: '💀飢餓', hungry: '😫空腹', normal: '😊普通', full: '😌満腹', stuffed: '🤢過食'
+};
+
+function recalcStats() {
+  const p = G.player;
+  const stage = hungerStage(p.hunger);
+  // ベース値から実効値を計算
+  let atkMult = 1.0, defMult = 1.0;
+  if      (stage === 'starving') { atkMult = 0.5;  defMult = 0.5;  }
+  else if (stage === 'hungry')   { atkMult = 0.8;  defMult = 0.85; }
+  else if (stage === 'normal')   { atkMult = 1.0;  defMult = 1.0;  }
+  else if (stage === 'full')     { atkMult = 1.3;  defMult = 1.3;  }
+  else if (stage === 'stuffed')  { atkMult = 0.9;  defMult = 1.1;  }
+
+  p.atk = Math.max(1, Math.floor(p.baseAtk * atkMult));
+  p.def = Math.max(0, Math.floor(p.baseDef * defMult));
+}
+
+function tickHunger() {
+  const p = G.player;
+  const prevStage = hungerStage(p.hunger);
+  // 満腹なほど速く減る、空腹なほどゆっくり
+  // 過食:1ターン, 満腹:2ターン, 普通:3ターン, 空腹:5ターン, 飢餓:8ターン
+  const drainInterval = { stuffed: 1, full: 2, normal: 3, hungry: 5, starving: 8 };
+  const interval = drainInterval[hungerStage(p.hunger)];
+  if (G.turn % interval === 0) p.hunger = Math.max(0, p.hunger - 1);
+  const newStage = hungerStage(p.hunger);
+
+  // ステージ変化時に通知
+  if (prevStage !== newStage) {
+    log(`${HUNGER_LABEL[newStage]} 満腹度が変わった！`, newStage === 'starving' ? 'log-dmg' : 'log-info');
+  }
+
+  // 飢餓時はHP削れる（毎ターン）
+  if (newStage === 'starving') {
+    p.hp -= 3;
+    log('💀 飢餓！ HP-3！！飯を食え！', 'log-dmg');
+    if (p.hp <= 0) { gameover(); }
+  }
+
+  recalcStats();
+}
+
+function tickMiasma() {
+  const p = G.player;
+  if (G.miasmaLeft > 0) {
+    G.miasmaLeft--;
+
+    if (G.miasmaLeft === 30) {
+      log('⚠️ 瘴気が迫っている…！急いで階段を降りろ！', 'log-dmg');
+      document.getElementById('miasma-box').classList.add('miasma-warning');
+    } else if (G.miasmaLeft === 10) {
+      log('💀 瘴気があと10ターンで満ちる！！', 'log-dmg');
+    } else if (G.miasmaLeft === 0) {
+      log('☠️ 瘴気がフロアを覆い尽くした！！毎ターンダメージを受ける！', 'log-dmg');
+      document.getElementById('miasma-bar').classList.add('danger');
+    }
+  } else {
+    // Over time — escalating damage
+    G.miasmaOver++;
+    const dmg = 2 + Math.floor(G.miasmaOver / 10);
+    p.hp -= dmg;
+    log(`🌫 瘴気ダメージ！ -${dmg}HP (残${p.hp}HP)`, 'log-dmg');
+    if (p.hp <= 0) { gameover(); }
+  }
+}
+
+
+function checkLevelUp() {
+  const p = G.player;
+  while (p.exp >= p.expNext) {
+    p.exp -= p.expNext;
+    p.lv++;
+    p.expNext = Math.floor(p.expNext * 1.5);
+    p.maxHp += 12;
+    p.hp = Math.min(p.hp + 12, p.maxHp);
+    p.baseAtk += 2;
+    recalcStats();
+    log(`✨ レベルアップ！ Lv${p.lv}！ HP+12 ATK+2`, 'log-level');
+  }
+}
+
+function interact() {
+  const p = G.player;
+  const tile = G.map[p.y][p.x];
+  if (tile === STAIRS) {
+    if (G.floor >= 10) {
+      log('これ以上は進めない...', 'log-info');
+    } else {
+      loadFloor(G.floor + 1);
+    }
+  } else if (tile === CHEST) {
+    openChest(p.x, p.y);
+  }
+}
+
+function gameover() {
+  const o = document.getElementById('overlay');
+  o.style.display = 'flex';
+  document.getElementById('overlay-title').textContent = '💀 GAME OVER';
+  document.getElementById('overlay-title').style.color = '#ff3040';
+  document.getElementById('overlay-sub1').textContent = `Lv${G.player.lv} | ${G.floor}階で力尽きた...`;
+  document.getElementById('overlay-sub2').textContent = `獲得Gold: ${G.player.gold}G`;
+}
+
+function victory() {
+  const o = document.getElementById('overlay');
+  o.style.display = 'flex';
+  document.getElementById('overlay-title').textContent = '🏆 VICTORY!!';
+  document.getElementById('overlay-title').style.color = '#ffd700';
+  document.getElementById('overlay-sub1').textContent = '魔王ドゥームを倒した！！';
+  document.getElementById('overlay-sub2').textContent = `Lv${G.player.lv} | Gold: ${G.player.gold}G `;
+}
+
+// ===== INPUT =====
+let invMode = false;   // インベントリフォーカス中か
+let invCursor = 0;     // 選択中のインデックス
+
+function getUsableItems() {
+  // 表示順に合わせた使用可能アイテムリスト（typeごとに1エントリ）
+  const USABLE_GROUPS = [
+    'potion_l','potion','potion_s','food',
+    'superbomb','bomb','scroll_heal','scroll_str','scroll_atk','elixir'
+  ];
+  const result = [];
+  for (const type of USABLE_GROUPS) {
+    const idx = G.player.inv.findIndex(i => i.type === type);
+    if (idx >= 0) result.push({ type, idx });
+  }
+  return result;
+}
+
+function enterInvMode() {
+  const items = getUsableItems();
+  if (!items.length) { log('アイテムがない！', 'log-info'); return; }
+  invMode = true;
+  invCursor = 0;
+  updateUI();
+}
+
+function exitInvMode() {
+  invMode = false;
+  updateUI();
+}
+
+function invUp() {
+  const items = getUsableItems();
+  invCursor = (invCursor - 1 + items.length) % items.length;
+  updateUI();
+}
+
+function invDown() {
+  const items = getUsableItems();
+  invCursor = (invCursor + 1) % items.length;
+  updateUI();
+}
+
+function invUse() {
+  const items = getUsableItems();
+  if (!items.length) return;
+  const { idx } = items[invCursor];
+  exitInvMode();
+  useItemAtIndex(idx);
+}
+document.addEventListener('keydown', e => {
+  if (!G.player) return;
+  const key = e.key;
+
+  // インベントリモード中
+  if (invMode) {
+    e.preventDefault();
+    if (key === 'ArrowUp' || key === 'w' || key === 'W') invUp();
+    else if (key === 'ArrowDown' || key === 's' || key === 'S') invDown();
+    else if (key === 'Enter' || key === ' ') invUse();
+    else if (key === 'Escape' || key === 'i' || key === 'I') exitInvMode();
+    return;
+  }
+
+  // 通常モード
+  stopAutoWalk();
+  if (key === 'ArrowUp' || key === 'w' || key === 'W') { e.preventDefault(); tryMove(0, -1); }
+  else if (key === 'ArrowDown' || key === 's' || key === 'S') { e.preventDefault(); tryMove(0, 1); }
+  else if (key === 'ArrowLeft' || key === 'a' || key === 'A') { e.preventDefault(); tryMove(-1, 0); }
+  else if (key === 'ArrowRight' || key === 'd' || key === 'D') { e.preventDefault(); tryMove(1, 0); }
+  else if (key === 'Enter' || key === ' ') { e.preventDefault(); interact(); }
+  else if (key === 'i' || key === 'I') { e.preventDefault(); enterInvMode(); }
+
+  drawGame();
+  updateUI();
+});
+
+// ===== CLICK TO MOVE =====
+let autoPath = [];
+let autoWalkInterval = null;
+let clickTarget = null;
+
+function bfsPath(sx, sy, tx, ty) {
+  if (sx === tx && sy === ty) return [];
+  const visited = Array.from({length: ROWS}, () => Array(COLS).fill(false));
+  const prev = Array.from({length: ROWS}, () => Array(COLS).fill(null));
+  const queue = [[sx, sy]];
+  visited[sy][sx] = true;
+  while (queue.length) {
+    const [cx, cy] = queue.shift();
+    if (cx === tx && cy === ty) {
+      // Reconstruct path
+      const path = [];
+      let cur = [tx, ty];
+      while (cur[0] !== sx || cur[1] !== sy) {
+        const p = prev[cur[1]][cur[0]];
+        path.unshift([cur[0] - p[0], cur[1] - p[1]]);
+        cur = p;
+      }
+      return path;
+    }
+    for (const [ddx, ddy] of [[0,-1],[0,1],[-1,0],[1,0]]) {
+      const nx = cx + ddx, ny = cy + ddy;
+      if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) continue;
+      if (visited[ny][nx]) continue;
+      const tile = G.map[ny][nx];
+      if (tile === WALL) continue;
+      // Allow path through enemies only if they're the target tile
+      const hasEnemy = G.enemies.some(e => e.x === nx && e.y === ny);
+      if (hasEnemy && !(nx === tx && ny === ty)) continue;
+      visited[ny][nx] = true;
+      prev[ny][nx] = [cx, cy];
+      queue.push([nx, ny]);
+    }
+  }
+  return null; // No path
+}
+
+function startAutoWalk(path) {
+  stopAutoWalk();
+  autoPath = path;
+  autoWalkInterval = setInterval(() => {
+    if (!autoPath.length || !G.player) { stopAutoWalk(); return; }
+    const [dx, dy] = autoPath.shift();
+    const prevHp = G.player.hp;
+    tryMove(dx, dy);
+    drawGame();
+    updateUI();
+    // Stop if took damage or enemies are adjacent
+    if (G.player.hp < prevHp) { stopAutoWalk(); return; }
+    const adjEnemy = G.enemies.some(e =>
+      Math.abs(e.x - G.player.x) + Math.abs(e.y - G.player.y) <= 1
+    );
+    if (adjEnemy || !autoPath.length) stopAutoWalk();
+  }, 120);
+}
+
+function stopAutoWalk() {
+  clearInterval(autoWalkInterval);
+  autoWalkInterval = null;
+  autoPath = [];
+  clickTarget = null;
+}
+
+canvas.addEventListener('click', e => {
+  if (!G.player) return;
+  stopAutoWalk();
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = Math.floor((e.clientX - rect.left) * scaleX / TILE);
+  const my = Math.floor((e.clientY - rect.top) * scaleY / TILE);
+  if (mx < 0 || mx >= COLS || my < 0 || my >= ROWS) return;
+  if (!G.explored[my]?.[mx]) return;
+
+  clickTarget = {x: mx, y: my};
+
+  // If adjacent enemy → attack immediately
+  const enemy = G.enemies.find(en => en.x === mx && en.y === my);
+  if (enemy && Math.abs(mx - G.player.x) + Math.abs(my - G.player.y) === 1) {
+    tryAttackEnemy(enemy);
+    updateUI(); drawGame();
+    return;
+  }
+
+  // If chest or stairs and standing on it
+  if (mx === G.player.x && my === G.player.y) {
+    interact(); drawGame(); updateUI(); return;
+  }
+
+  const path = bfsPath(G.player.x, G.player.y, mx, my);
+  if (!path || path.length === 0) {
+    log('そこへは行けない', 'log-info'); return;
+  }
+  startAutoWalk(path);
+});
+
+// Show pointer cursor over walkable explored tiles
+canvas.addEventListener('mousemove', e => {
+  if (!G.player) return;
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const mx = Math.floor((e.clientX - rect.left) * scaleX / TILE);
+  const my = Math.floor((e.clientY - rect.top) * scaleY / TILE);
+  if (G.explored[my]?.[mx] && G.map[my]?.[mx] !== WALL) {
+    canvas.style.cursor = 'pointer';
+  } else {
+    canvas.style.cursor = 'default';
+  }
+});
+
+// Mobile controls (swipe)
+let touchStart = null;
+canvas.addEventListener('touchstart', e => { touchStart = e.touches[0]; stopAutoWalk(); });
+canvas.addEventListener('touchend', e => {
+  if (!touchStart) return;
+  const dx = e.changedTouches[0].clientX - touchStart.clientX;
+  const dy = e.changedTouches[0].clientY - touchStart.clientY;
+  if (Math.abs(dx) > Math.abs(dy)) {
+    if (Math.abs(dx) > 20) tryMove(dx > 0 ? 1 : -1, 0);
+  } else {
+    if (Math.abs(dy) > 20) tryMove(0, dy > 0 ? 1 : -1);
+  }
+  touchStart = null;
+  drawGame();
+});
+
+// ===== GAME LOOP =====
+let lastTime = 0;
+function loop(t) {
+  if (t - lastTime > 32) {
+    drawGame();
+    lastTime = t;
+  }
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
