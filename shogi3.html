@@ -590,10 +590,11 @@ function pieceScore(b, h, o){
 function evalStatic(b, h, elim){
   elim = elim || eliminated;
 
-  if(humanEliminated){
+  // 探索中はelim引数で人間脱落を判定（グローバルに依存しない）
+  const humanIsElim = elim[humanPlayer];
+  if(humanIsElim){
 
-    // CPU対CPU: P1の視点で評価（P1有利=高スコア）
-    // 生きてるCPUを特定
+    // CPU対CPU: 生きてるCPUを特定
     const cpus = [0,1,2].filter(o=>!elim[o]);
     if(cpus.length <= 1) return 0;
     const c1=cpus[0], c2=cpus[1];
@@ -871,8 +872,10 @@ function nextTurn(bd) {
   if (turn === humanPlayer) {
     if (!allMoves(humanPlayer,bd).length) {
       setStatus('手がありません（スキップ）');
+      const _sg = gameGen;
       setTimeout(() => {
-        if (!gover) nextTurn(bd);
+        if (_sg !== gameGen || gover) return;
+        nextTurn(bd);
       }, 800);
     } else {
       setStatus(PNAME[humanPlayer] + 'の番です');
