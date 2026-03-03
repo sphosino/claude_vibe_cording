@@ -284,15 +284,15 @@ function mustPromote(p,o,tr,tc){
   return false;
 }
 
-function allMoves(o){
+function allMoves(o,bd){
   if(eliminated[o]) return [];
   const res=[];
 
   // 盤上の駒
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell=board[r][c];
+    const cell=bd[r][c];
     if(!cell||cell.o!==o) continue;
-    rawMoves(board,r,c).forEach(([tr,tc])=>{
+    rawMoves(bd,r,c).forEach(([tr,tc])=>{
       const canPro=!cell.pr&&['FU','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
       const must=mustPromote(cell.p,o,tr,tc);
@@ -309,15 +309,15 @@ function allMoves(o){
   hand[o].forEach(piece=>{
     if(seen.has(piece)) return; seen.add(piece);
     for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-      if(board[r][c]) continue;
+      if(bd[r][c]) continue;
       // FU: 二歩・行き所なしチェック
       if(piece==='FU'){
         if(mustPromote('FU',o,r,c)) continue;
         let nifu=false;
         if(o===0||o===1){
-          for(let rr=0;rr<9;rr++){const cl=board[rr][c];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}}
+          for(let rr=0;rr<9;rr++){const cl=bd[rr][c];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}}
         } else {
-          for(let cc=0;cc<9;cc++){const cl=board[r][cc];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}}
+          for(let cc=0;cc<9;cc++){const cl=bd[r][cc];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}}
         }
         if(nifu) continue;
       }
@@ -548,9 +548,7 @@ function allMovesOn(bd,hd,o){
   // 盤上の駒
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
-    const savedBoard=board; board=bd;
     const dests=rawMoves(bd,r,c);
-    board=savedBoard;
     dests.forEach(([tr,tc])=>{
       const canPro=!cell.pr&&['FU','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
@@ -613,16 +611,11 @@ function minimaxRound(bd, hd, depth, alpha, beta, turnPlayer){
       const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
       if(cap && cap.p === 'OU') return 2000000;
 
-      // 次の手番
-      let next;
-      if(turnPlayer === 1) next = 2;
-      else next = 0; // ②の次はP0
-
       const score = minimaxRound(
         nb, nh,
-        depth,
+        depth-1,
         alpha, beta,
-        next
+        getNextAlivePlayer(turnPlayer)
       );
 
       best = Math.max(best, score);
@@ -653,7 +646,7 @@ function minimaxRound(bd, hd, depth, alpha, beta, turnPlayer){
         nb, nh,
         depth-1,
         alpha, beta,
-        1   // 次はCPU①
+        getNextAlivePlayer(0)
       );
 
       best = Math.min(best, score);
@@ -672,17 +665,16 @@ function kingWouldBeCaptured(bd, hd, o){
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=bd[r][c];
     if(!cell||cell.o===o||eliminated[cell.o]) continue;
-    const savedBoard=board; board=bd;
     const dests=rawMoves(bd,r,c);
-    board=savedBoard;
+
     if(dests.some(([mr,mc])=>mr===kr&&mc===kc)) return true;
   }
   return false;
 }
 
-function aiMove(o){
+function aiMove(o,bd){
 console.time("AI"+o);
-  let moves=allMoves(o);
+  let moves=allMoves(o,bd);
   if(!moves.length) return null;
 
   // 自爆防止: 動かした後に王が取られる手は除外
@@ -709,14 +701,13 @@ console.time("AI"+o);
     }
 
     const {b:nb,h:nh}=simApply(board,hand,mv,o);
-    const nextTurnPlayer = (o === 1 ? 2 : 0);
     const v = minimaxRound(
         nb,
         nh,
-         2,
+         3,
         -Infinity,
          Infinity,
-        nextTurnPlayer
+        getNextAlivePlayer(o)
     );
     if(v>bestScore){bestScore=v;best=mv;}
   }
@@ -726,32 +717,37 @@ console.timeEnd("AI"+o);
 }
 
 // ── ターン管理 ──
-function nextTurn(){
-  if(gover) return;
-  let next=(turn+1)%3;
-  let tries=0;
-  while(eliminated[next]&&tries<3){next=(next+1)%3;tries++;}
-  if(eliminated[next]){gover=true;return;}
-  turn=next;
-  render(); // 枠色を即時更新
+function nextTurn(bd) {
+  if (gover) return;
 
-  if(turn===0){
-    // P0チェック: 手がなければスキップ
-    if(!allMoves(0).length){
+  let next = getNextAlivePlayer(turn);
+  if (next === -1) {
+    gover = true;
+    setStatus('全員脱落？ 異常終了です');
+    return;
+  }
+
+  turn = next;
+  render(); // 枠色更新
+
+  if (turn === 0) {
+    if (!allMoves(0,bd).length) {
       setStatus('手がありません（スキップ）');
-      setTimeout(()=>{if(!gover){turn=0;nextTurn();}},800);
+      setTimeout(() => {
+        if (!gover) nextTurn(bd);
+      }, 800);
     } else {
-      setStatus(PNAME[0]+'の番です');
+      setStatus(PNAME[0] + 'の番です');
     }
   } else {
-    setStatus(PNAME[turn]+'が考え中...');
-    setTimeout(()=>{
-      if(gover) return;
-      const mv=aiMove(turn);
-      if(mv){
-        applyMove(mv,turn);
+    setStatus(PNAME[turn] + 'が考え中...');
+    setTimeout(() => {
+      if (gover) return;
+      const mv = aiMove(turn,bd);
+      if (mv) {
+        applyMove(mv, turn);
         render();
-        if(!gover) nextTurn();
+        if (!gover) nextTurn(bd);
       }
     }, 400);
   }
@@ -777,7 +773,7 @@ canvas.addEventListener('click',e=>{
         applyMove(matching[0],0);
         selected=null;selHand=false;vmoves=[];
         render();
-        if(!gover) nextTurn();
+        if(!gover) nextTurn(board);
         return;
       }
     }
@@ -789,14 +785,14 @@ canvas.addEventListener('click',e=>{
     const cell=board[r][c];
     if(cell?.o===0){
       selected=[r,c];selHand=false;
-      vmoves=allMoves(0).filter(m=>!m.drop&&m.fr===r&&m.fc===c);
+      vmoves=allMoves(0,board).filter(m=>!m.drop&&m.fr===r&&m.fc===c);
     }
   } else if(hi>=0){
     const uh=uniqueHand(0);
     if(uh[hi]){
       selHand=true;selected=hi;
       const piece=uh[hi].p;
-      vmoves=allMoves(0).filter(m=>m.drop&&m.piece===piece);
+      vmoves=allMoves(0,board).filter(m=>m.drop&&m.piece===piece);
     }
   }
   render();
@@ -813,7 +809,7 @@ function handlePromoClick(mx,my){
       applyMove(chosen,0);
       selected=null;selHand=false;vmoves=[];
       render();
-      if(!gover) nextTurn();
+      if(!gover) nextTurn(board);
     }
   }
 }
@@ -838,6 +834,21 @@ function uniqueHand(o){
   const m={};
   hand[o].forEach(p=>m[p]=(m[p]||0)+1);
   return Object.entries(m).map(([p,n])=>({p,n}));
+}
+
+// 共通関数：次の生きてるプレイヤーを返す
+function getNextAlivePlayer(current) {
+  let next = (current + 1) % 3;
+  let tries = 0;
+  while (eliminated[next] && tries < 3) {
+    next = (next + 1) % 3;
+    tries++;
+  }
+  // 3回回って戻ってきたら全員脱落（ゲーム終了のはず）
+  if (tries >= 3) {
+    return -1; // 異常終了フラグ
+  }
+  return next;
 }
 
 // ── 描画 ──
