@@ -1,0 +1,1016 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>三人将棋</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: radial-gradient(ellipse at center, #1a0900 0%, #060200 100%);
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height:100vh; user-select:none;
+  font-family:'Hiragino Mincho Pro','Yu Mincho','MS Mincho',serif;
+}
+#info {
+  color:#f0d090; font-size:15px; margin:6px 0;
+  letter-spacing:2px; height:24px; text-shadow:0 1px 6px #0008;
+}
+canvas { display:block; cursor:pointer; }
+#btnRow { margin-top:8px; display:flex; gap:10px; }
+button {
+  padding:7px 18px; background:#3a1500; color:#f0d090;
+  border:1px solid #804010; font-size:14px; cursor:pointer;
+  border-radius:3px; letter-spacing:1px; font-family:inherit;
+}
+button:hover { background:#5a2800; }
+#rules {
+  color:#806040; font-size:11px; margin-top:6px; text-align:center;
+  line-height:1.7; max-width:700px;
+}
+</style>
+</head>
+<body>
+<div id="info">先手（あなた）の番です</div>
+<canvas id="c"></canvas>
+<div id="btnRow"><button onclick="init()">最初から</button></div>
+<div id="rules">
+  ✦ 特別ルール①：取った駒は消える。相手より駒が3個以上少なければ手駒にできる ✦<br>
+  ✦ 特別ルール②：入玉（トライ）=即勝ち！王で敵陣3段目に踏み込め ✦<br>
+  ⚠️ CPU①②は談合モード：あなたを集中攻撃してきます。逃げ込むか叩くか！<br>
+  先手 <span style="color:#5588ff">■</span> (あなた・下) ／ CPU① <span style="color:#ff4433">■</span> (赤・上) ／ CPU② <span style="color:#33bb55">■</span> (緑・右)
+</div>
+<script>
+// =====================================================================
+// 三人将棋
+// P0: 下→上 (forward = dr:-1, dc:0)
+// P1: 上→下 (forward = dr:+1, dc:0)
+// P2: 右→左 (forward = dr:0,  dc:-1)
+// =====================================================================
+
+const CS=56, BX=115, BY=115, CW=760, CH=760;
+const canvas=document.getElementById('c');
+const ctx=canvas.getContext('2d');
+canvas.width=CW; canvas.height=CH;
+
+const PV  ={FU:100,GIN:400,KIN:500,KAKU:800,HI:900,OU:99999};
+const PVP ={FU:200,GIN:50,KAKU:500,HI:450};
+const PC  ={FU:'歩',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
+const PCP ={FU:'と',GIN:'全',KAKU:'馬',HI:'龍'};
+const PCOL=['#4488ff','#ff4433','#33cc55'];
+const PNAME=['先手(あなた)','CPU①','CPU②'];
+const DRAW_ANGLE=[0, Math.PI, -Math.PI/2]; // piece facing direction per owner
+
+let board, hand, turn, gover, winner;
+let selected, vmoves, selHand, promoQ, lastMove, collusionTarget=null;
+let eliminated;
+
+// ── roundRect polyfill ──
+if(!CanvasRenderingContext2D.prototype.roundRect){
+  CanvasRenderingContext2D.prototype.roundRect=function(x,y,w,h,r){
+    this.beginPath();
+    this.moveTo(x+r,y);this.lineTo(x+w-r,y);
+    this.arcTo(x+w,y,x+w,y+r,r);this.lineTo(x+w,y+h-r);
+    this.arcTo(x+w,y+h,x+w-r,y+h,r);this.lineTo(x+r,y+h);
+    this.arcTo(x,y+h,x,y+h-r,r);this.lineTo(x,y+r);
+    this.arcTo(x,y,x+r,y,r);this.closePath();
+  };
+}
+
+// ── ユーティリティ ──
+function inB(r,c){return r>=0&&r<9&&c>=0&&c<9;}
+
+// 各プレイヤーの前進方向に合わせて差分を回転
+function rotDir(dr,dc,o){
+  if(o===0) return [dr,dc];         // forward=up  → identity
+  if(o===1) return [-dr,-dc];       // forward=down → 180°
+  return [-dc,dr];                  // forward=left → 90°CCW
+}
+
+// ── 初期化 ──
+function init(){
+  board=Array.from({length:9},()=>Array(9).fill(null));
+  hand=[[],[],[]];
+  turn=0; gover=false; winner=-1;
+  selected=null; vmoves=[]; selHand=false; promoQ=null;
+  eliminated=[false,false,false];
+  lastMove=null; collusionTarget=null;
+
+  // P0 (下、前=上)
+  // row8: 銀金玉金銀  row7: 飛・角  row6: 歩×5
+  [[8,0,'GIN'],[8,1,'KIN'],[8,2,'OU'],[8,3,'KIN'],[8,4,'GIN'],
+   [7,0,'HI'],[7,4,'KAKU']].forEach(([r,c,p])=>board[r][c]={p,o:0,pr:false});
+  for(let c=0;c<=4;c++) board[6][c]={p:'FU',o:0,pr:false};
+
+  // P1 (上、前=下)
+  // row0: 銀金玉金銀  row1: 角・飛(P0と逆)  row2: 歩×5
+  [[0,0,'GIN'],[0,1,'KIN'],[0,2,'OU'],[0,3,'KIN'],[0,4,'GIN'],
+   [1,0,'KAKU'],[1,4,'HI']].forEach(([r,c,p])=>board[r][c]={p,o:1,pr:false});
+  for(let c=0;c<=4;c++) board[2][c]={p:'FU',o:1,pr:false};
+
+  // P2 (右、前=左) 中央(row4)に王が来るよう配置
+  // col8: 銀金玉金銀  col7: 角・飛  col6: 歩×5
+  [[2,8,'GIN'],[3,8,'KIN'],[4,8,'OU'],[5,8,'KIN'],[6,8,'GIN'],
+   [2,7,'KAKU'],[6,7,'HI']].forEach(([r,c,p])=>board[r][c]={p,o:2,pr:false});
+  for(let r=2;r<=6;r++) board[r][6]={p:'FU',o:2,pr:false};
+
+  setStatus(PNAME[0]+'の番です');
+  render();
+}
+
+function setStatus(msg){document.getElementById('info').textContent=msg;}
+
+// ── 駒数カウント（手駒含む） ──
+function countPieces(o){
+  let n=hand[o].length;
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++) if(board[r][c]?.o===o) n++;
+  return n;
+}
+
+// 特別ルール: 被取得者が取得者より3個以上多ければ手駒にできる
+// 追加条件①：被取得者の玉が中央（5段目/5列目）以上に進んでいる場合
+// 追加条件②：成り駒を取った場合は、条件なしで手駒にできる
+function canKeep(attackerO, victimO, victimPiece){
+  // 成り駒（裏返っている駒）なら無条件でOK
+  if (victimPiece && victimPiece.pr) return true;
+
+  // 玉の位置による判定
+  const [kr, kc] = findKingOn(board, victimO);
+  let isBeyondCenter = false;
+  if (kr !== -1) {
+    if (victimO === 0) isBeyondCenter = (kr <= 4);
+    else if (victimO === 1) isBeyondCenter = (kr >= 4);
+    else if (victimO === 2) isBeyondCenter = (kc <= 4);
+  }
+  if (isBeyondCenter) return true;
+
+  // 駒数差による判定
+  return (countPieces(victimO) - countPieces(attackerO) >= 3);
+}
+
+
+
+// ── 合法手生成 ──
+function rawMoves(bd,r,c){
+  const cell=bd[r][c]; if(!cell) return [];
+  const {p,o,pr}=cell, res=[];
+
+  const step=(dr,dc)=>{
+    const [rdr,rdc]=rotDir(dr,dc,o);
+    const nr=r+rdr,nc=c+rdc;
+    if(!inB(nr,nc)||bd[nr][nc]?.o===o) return;
+    res.push([nr,nc]);
+  };
+
+  // 飛・角はsymmetricなので回転不要
+  const slide=(dr,dc)=>{
+    let nr=r+dr,nc=c+dc;
+    while(inB(nr,nc)){
+      if(bd[nr][nc]?.o===o) break;
+      res.push([nr,nc]);
+      if(bd[nr][nc]) break;
+      nr+=dr; nc+=dc;
+    }
+  };
+
+  // 成り駒（金将動き）
+  if(pr&&['FU','GIN'].includes(p)){
+    [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,0]].forEach(([dr,dc])=>step(dr,dc));
+    return res;
+  }
+
+  switch(p){
+    case 'FU': step(-1,0); break;
+    case 'GIN':
+      [[-1,-1],[-1,0],[-1,1],[1,-1],[1,1]].forEach(([dr,dc])=>step(dr,dc)); break;
+    case 'KIN':
+      [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,0]].forEach(([dr,dc])=>step(dr,dc)); break;
+    case 'HI':
+      [[1,0],[-1,0],[0,1],[0,-1]].forEach(([dr,dc])=>slide(dr,dc));
+      if(pr)[[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc])=>step(dr,dc)); break;
+    case 'KAKU':
+      [[-1,-1],[-1,1],[1,-1],[1,1]].forEach(([dr,dc])=>slide(dr,dc));
+      if(pr)[[1,0],[-1,0],[0,1],[0,-1]].forEach(([dr,dc])=>step(dr,dc)); break;
+    case 'OU':
+      for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++)
+        if(dr||dc) step(dr,dc);
+      break;
+  }
+  return res;
+}
+
+function inPromoZone(o,r,c){
+  if(o===0) return r<=2;   // P0の敵陣: 上3行
+  if(o===1) return r>=6;   // P1の敵陣: 下3行
+  return c<=2;             // P2の敵陣: 左3列
+}
+
+function mustPromote(p,o,tr,tc){
+  if(p==='FU'){
+    if(o===0) return tr===0;
+    if(o===1) return tr===8;
+    return tc===0;
+  }
+  return false;
+}
+
+function allMoves(o){
+  if(eliminated[o]) return [];
+  const res=[];
+
+  // 盤上の駒
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell=board[r][c];
+    if(!cell||cell.o!==o) continue;
+    rawMoves(board,r,c).forEach(([tr,tc])=>{
+      const canPro=!cell.pr&&['FU','GIN','KAKU','HI'].includes(cell.p);
+      const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
+      const must=mustPromote(cell.p,o,tr,tc);
+      const base={fr:r,fc:c,tr,tc,drop:false};
+      if(inZone){
+        if(must) res.push({...base,pro:true});
+        else{ res.push({...base,pro:false}); res.push({...base,pro:true}); }
+      } else res.push({...base,pro:false});
+    });
+  }
+
+  // 持ち駒打ち
+  const seen=new Set();
+  hand[o].forEach(piece=>{
+    if(seen.has(piece)) return; seen.add(piece);
+    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+      if(board[r][c]) continue;
+      // FU: 二歩・行き所なしチェック
+      if(piece==='FU'){
+        if(mustPromote('FU',o,r,c)) continue;
+        let nifu=false;
+        if(o===0||o===1){
+          for(let rr=0;rr<9;rr++){const cl=board[rr][c];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}}
+        } else {
+          for(let cc=0;cc<9;cc++){const cl=board[r][cc];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}}
+        }
+        if(nifu) continue;
+      }
+      res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
+    }
+  });
+  return res;
+}
+
+// ── 手を適用 ──
+function applyMove(mv,o){
+  if(mv.drop){
+    const idx=hand[o].indexOf(mv.piece);
+    hand[o].splice(idx,1);
+    board[mv.tr][mv.tc]={p:mv.piece,o,pr:false};
+    lastMove={tr:mv.tr,tc:mv.tc,o};
+    return;
+  }
+
+  const cell=board[mv.fr][mv.fc];
+  const cap=board[mv.tr][mv.tc];
+
+  if(cap){
+    if(cap.p==='OU'){
+      // 王を取った: そのプレイヤー脱落
+      board[mv.tr][mv.tc]={p:cell.p,o,pr:mv.pro||cell.pr};
+      board[mv.fr][mv.fc]=null;
+      eliminated[cap.o]=true;
+      const alive=eliminated.filter(e=>!e).length;
+      if(alive<=1){
+        gover=true; winner=o;
+        setStatus('🎉 '+PNAME[o]+'の勝ち！');
+      } else {
+        setStatus(PNAME[cap.o]+'が脱落！残り'+alive+'人');
+      }
+      render();
+      return;
+    }
+    // 特別ルール適用（脱落者の駒は無条件で拾える）
+    if(eliminated[cap.o] || canKeep(o,cap.o,cap)) hand[o].push(cap.p);
+    // else: 消える
+  }
+
+  board[mv.tr][mv.tc]={p:cell.p,o,pr:mv.pro||cell.pr};
+  board[mv.fr][mv.fc]=null;
+  lastMove={tr:mv.tr,tc:mv.tc,fr:mv.fr,fc:mv.fc,o};
+
+  // トライルール：王が敵陣に入ったら勝ち
+  if(cell.p==='OU'){
+    const tr2=mv.tr, tc2=mv.tc;
+    let tryWin=false;
+    if(o===0 && tr2<=0) tryWin=true;   // P0の王が上段（P1陣）へ
+    if(o===1 && tr2>=8) tryWin=true;   // P1の王が下段（P0陣）へ
+    if(o===2 && tc2<=0) tryWin=true;   // P2の王が左段へ
+    if(tryWin){
+      gover=true; winner=o;
+      setStatus('🏯 入玉！'+PNAME[o]+'の勝ち！');
+      render();
+      return;
+    }
+  }
+}
+
+// ── AI ──
+const ENEMY=0;
+
+function simApply(bd, hd, mv, o){
+
+  // --- 深いコピー ---
+  const b = bd.map(r => r.map(c => c ? {...c} : null));
+  const h = [hd[0].slice(), hd[1].slice(), hd[2].slice()];
+
+  // =====================
+  // ドロップ
+  // =====================
+  if(mv.drop){
+    const idx = h[o].indexOf(mv.piece);
+    if(idx >= 0) h[o].splice(idx, 1);
+
+    b[mv.tr][mv.tc] = { p: mv.piece, o, pr:false };
+    return { b, h };
+  }
+
+  const cell = b[mv.fr][mv.fc];
+  if(!cell) return { b, h };
+
+  const cap = b[mv.tr][mv.tc];
+
+  // =====================
+  // 王を取った場合
+  // =====================
+  if(cap && cap.p === 'OU'){
+    b[mv.tr][mv.tc] = { p: cell.p, o, pr: mv.pro || cell.pr };
+    b[mv.fr][mv.fc] = null;
+
+    return { b, h, tryWin:true };
+  }
+
+  // =====================
+  // 通常の取得処理（本番と同じ条件）
+  // =====================
+  if(cap){
+
+    // 成り駒は無条件保持
+    if(cap.pr){
+      h[o].push(cap.p);
+    }
+    else {
+
+      // 玉位置条件判定
+      const [kr, kc] = findKingOn(b, cap.o);
+      let isBeyondCenter = false;
+
+      if(kr !== -1){
+        if(cap.o === 0) isBeyondCenter = (kr <= 4);
+        else if(cap.o === 1) isBeyondCenter = (kr >= 4);
+        else if(cap.o === 2) isBeyondCenter = (kc <= 4);
+      }
+
+      if(isBeyondCenter){
+        h[o].push(cap.p);
+      }
+      else {
+        // 駒数差条件
+        const diff =
+          countPiecesOn(b,h,cap.o) - countPiecesOn(b,h,o);
+
+        if(diff >= 3){
+          h[o].push(cap.p);
+        }
+      }
+    }
+  }
+
+  // =====================
+  // 駒移動
+  // =====================
+  b[mv.tr][mv.tc] = {
+    p: cell.p,
+    o,
+    pr: mv.pro || cell.pr
+  };
+
+  b[mv.fr][mv.fc] = null;
+
+  // =====================
+  // トライ判定（全プレイヤー対応）
+  // =====================
+  if(cell.p === 'OU'){
+    if(o===0 && mv.tr<=0) return { b, h, tryWin:true };
+    if(o===1 && mv.tr>=8) return { b, h, tryWin:true };
+    if(o===2 && mv.tc<=0) return { b, h, tryWin:true };
+  }
+
+  return { b, h };
+}
+
+
+function countPiecesOn(b,h,o){
+  let n=h[o].length;
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++) if(b[r][c]?.o===o) n++;
+  return n;
+}
+
+function findKingOn(b,o){
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++)
+    if(b[r][c]?.p==='OU'&&b[r][c]?.o===o) return [r,c];
+  return [-1,-1];
+}
+
+function kingEscapesOn(b,o){
+  const [kr,kc]=findKingOn(b,o);
+  if(kr<0) return 0;
+  let n=0;
+  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+    if(!dr&&!dc) continue;
+    const nr=kr+dr,nc=kc+dc;
+    if(inB(nr,nc)&&b[nr][nc]?.o!==o) n++;
+  }
+  return n;
+}
+
+// 静的評価: CPUがどれだけ有利か（高いほどCPU有利）
+function evalStatic(b,h){
+  let score=0;
+  // 駒の価値
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell=b[r][c]; if(!cell) continue;
+    let v=PV[cell.p]; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
+    if(cell.o===ENEMY) score-=v; else score+=v;
+  }
+  // 手駒の価値
+  h[ENEMY].forEach(p=>score-=PV[p]*0.7);
+  [1,2].forEach(o=>h[o].forEach(p=>score+=PV[p]*0.7));
+
+  // P0の王の逃げ場（少ないほどCPU有利）
+  const esc=kingEscapesOn(b,ENEMY);
+  score+=(8-esc)*90;
+
+  // P0の王への最近距離（小さいほどCPU有利）
+  const [kr,kc]=findKingOn(b,ENEMY);
+  if(kr>=0){
+    [1,2].forEach(cpu=>{
+      if(eliminated[cpu]) return;
+      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+        const cell=b[r][c];
+        if(cell?.o===cpu&&cell?.p!=='OU'){
+          const dist=Math.abs(r-kr)+Math.abs(c-kc);
+          score+=Math.max(0,(8-dist))*12;
+        }
+      }
+    });
+  }
+
+  // CPUのトライ距離（P0陣3段目まであと何手か）
+  const [k1r]=findKingOn(b,1);
+  const [k2r,k2c]=findKingOn(b,2);
+  if(k1r>0&&!eliminated[1]) score+=(k1r-5)*30; // P1王が下に近いほど高得点
+  if(k2c>0&&!eliminated[2]) score+=(k2c-5)*30; // P2王が左に近いほど高得点
+
+  return score;
+}
+
+// 合法手生成（盤面引数版）
+function allMovesOn(bd,hd,o){
+  if(eliminated[o]) return [];
+  const res=[];
+  // 盤上の駒
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
+    const savedBoard=board; board=bd;
+    const dests=rawMoves(bd,r,c);
+    board=savedBoard;
+    dests.forEach(([tr,tc])=>{
+      const canPro=!cell.pr&&['FU','GIN','KAKU','HI'].includes(cell.p);
+      const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
+      const must=mustPromote(cell.p,o,tr,tc);
+      const base={fr:r,fc:c,tr,tc,drop:false};
+      if(inZone){ if(must) res.push({...base,pro:true}); else{res.push({...base,pro:false});res.push({...base,pro:true});} }
+      else res.push({...base,pro:false});
+    });
+  }
+  // 持ち駒
+  const seen=new Set();
+  hd[o].forEach(piece=>{
+    if(seen.has(piece)) return; seen.add(piece);
+    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+      if(bd[r][c]) continue;
+      if(piece==='FU'&&mustPromote('FU',o,r,c)) continue;
+      if(piece==='FU'){
+        let nifu=false;
+        if(o===0||o===1){ for(let rr=0;rr<9;rr++){const cl=bd[rr][c];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}} }
+        else{ for(let cc=0;cc<9;cc++){const cl=bd[r][cc];if(cl?.o===o&&cl?.p==='FU'&&!cl?.pr){nifu=true;break;}} }
+        if(nifu) continue;
+      }
+      res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
+    }
+  });
+  return res;
+}
+
+// 手のソート（強い手から探索→枝刈り効率UP）
+function sortMoves(moves,bd){
+  return moves.sort((a,b)=>{
+    const va=!a.drop&&bd[a.tr]?.[a.tc]?PV[bd[a.tr][a.tc].p]:0;
+    const vb=!b.drop&&bd[b.tr]?.[b.tc]?PV[bd[b.tr][b.tc].p]:0;
+    return vb-va;
+  });
+}
+
+// 2手先ミニマックス（CPU連合 vs P0）
+// CPU①②は協力してP0を攻める連合AI
+// maxing=true: CPUの手番、false: P0の手番
+function minimaxRound(bd, hd, depth, alpha, beta, turnPlayer){
+
+  // depth=0なら評価
+  if(depth === 0){
+    return evalStatic(bd, hd);
+  }
+
+  // ---- CPU側（最大化）----
+  if(turnPlayer === 1 || turnPlayer === 2){
+
+    const moves = sortMoves(allMovesOn(bd, hd, turnPlayer), bd);
+    if(!moves.length) return evalStatic(bd, hd);
+
+    let best = -Infinity;
+
+    for(const mv of moves){
+      const {b:nb, h:nh, tryWin} = simApply(bd, hd, mv, turnPlayer);
+
+      if(tryWin) return 1800000;
+      const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
+      if(cap && cap.p === 'OU') return 2000000;
+
+      // 次の手番
+      let next;
+      if(turnPlayer === 1) next = 2;
+      else next = 0; // ②の次はP0
+
+      const score = minimaxRound(
+        nb, nh,
+        depth,
+        alpha, beta,
+        next
+      );
+
+      best = Math.max(best, score);
+      alpha = Math.max(alpha, score);
+      if(beta <= alpha) break;
+    }
+
+    return best;
+  }
+
+  // ---- P0側（最小化）----
+  else {
+
+    const moves = sortMoves(allMovesOn(bd, hd, 0), bd);
+    if(!moves.length) return evalStatic(bd, hd);
+
+    let best = Infinity;
+
+    for(const mv of moves){
+      const {b:nb, h:nh, tryWin} = simApply(bd, hd, mv, 0);
+
+      if(tryWin) return -1500000;
+      const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
+      if(cap && cap.p === 'OU') return -2000000;
+
+      // P0が終わったらラウンド終了 → depth-1
+      const score = minimaxRound(
+        nb, nh,
+        depth-1,
+        alpha, beta,
+        1   // 次はCPU①
+      );
+
+      best = Math.min(best, score);
+      beta = Math.min(beta, score);
+      if(beta <= alpha) break;
+    }
+
+    return best;
+  }
+}
+
+// 動いた後に王がすぐ取られるかチェック（自爆防止）
+function kingWouldBeCaptured(bd, hd, o){
+  const [kr,kc]=findKingOn(bd,o);
+  if(kr<0) return false;
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell=bd[r][c];
+    if(!cell||cell.o===o||eliminated[cell.o]) continue;
+    const savedBoard=board; board=bd;
+    const dests=rawMoves(bd,r,c);
+    board=savedBoard;
+    if(dests.some(([mr,mc])=>mr===kr&&mc===kc)) return true;
+  }
+  return false;
+}
+
+function aiMove(o){
+console.time("AI"+o);
+  let moves=allMoves(o);
+  if(!moves.length) return null;
+
+  // 自爆防止: 動かした後に王が取られる手は除外
+  const safeMoves=moves.filter(mv=>{
+    const {b:nb,h:nh}=simApply(board,hand,mv,o);
+    return !kingWouldBeCaptured(nb,nh,o);
+  });
+  // 全部危険なら仕方なく元のリストから選ぶ
+  if(safeMoves.length>0) moves=safeMoves;
+
+  sortMoves(moves, board);
+
+  let best=moves[0], bestScore=-Infinity;
+  for(const mv of moves){
+    // 即勝ち手はすぐ返す
+    if(!mv.drop){
+      const cap=board[mv.tr]?.[mv.tc];
+      if(cap?.p==='OU') return mv;
+      const cell=board[mv.fr]?.[mv.fc];
+      if(cell?.p==='OU'){
+        if(o===1&&mv.tr>=6) return mv;
+        if(o===2&&mv.tc<=2) return mv;
+      }
+    }
+
+    const {b:nb,h:nh}=simApply(board,hand,mv,o);
+    const nextTurnPlayer = (o === 1 ? 2 : 0);
+    const v = minimaxRound(
+        nb,
+        nh,
+         2,
+        -Infinity,
+         Infinity,
+        nextTurnPlayer
+    );
+    if(v>bestScore){bestScore=v;best=mv;}
+  }
+
+console.timeEnd("AI"+o);
+  return best;
+}
+
+// ── ターン管理 ──
+function nextTurn(){
+  if(gover) return;
+  let next=(turn+1)%3;
+  let tries=0;
+  while(eliminated[next]&&tries<3){next=(next+1)%3;tries++;}
+  if(eliminated[next]){gover=true;return;}
+  turn=next;
+  render(); // 枠色を即時更新
+
+  if(turn===0){
+    // P0チェック: 手がなければスキップ
+    if(!allMoves(0).length){
+      setStatus('手がありません（スキップ）');
+      setTimeout(()=>{if(!gover){turn=0;nextTurn();}},800);
+    } else {
+      setStatus(PNAME[0]+'の番です');
+    }
+  } else {
+    setStatus(PNAME[turn]+'が考え中...');
+    setTimeout(()=>{
+      if(gover) return;
+      const mv=aiMove(turn);
+      if(mv){
+        applyMove(mv,turn);
+        render();
+        if(!gover) nextTurn();
+      }
+    }, 400);
+  }
+}
+
+// ── クリック ──
+canvas.addEventListener('click',e=>{
+  const rect=canvas.getBoundingClientRect();
+  const mx=e.clientX-rect.left, my=e.clientY-rect.top;
+
+  if(promoQ){handlePromoClick(mx,my);return;}
+  if(gover||turn!==0) return;
+
+  const bc=xyToBoard(mx,my);
+  const hi=xyToHand0(mx,my);
+
+  if(selected!==null||selHand){
+    if(bc){
+      const [tr,tc]=bc;
+      const matching=vmoves.filter(m=>m.tr===tr&&m.tc===tc);
+      if(matching.length){
+        if(matching.length===2){promoQ={mvs:matching};render();return;}
+        applyMove(matching[0],0);
+        selected=null;selHand=false;vmoves=[];
+        render();
+        if(!gover) nextTurn();
+        return;
+      }
+    }
+    selected=null;selHand=false;vmoves=[];
+  }
+
+  if(bc){
+    const [r,c]=bc;
+    const cell=board[r][c];
+    if(cell?.o===0){
+      selected=[r,c];selHand=false;
+      vmoves=allMoves(0).filter(m=>!m.drop&&m.fr===r&&m.fc===c);
+    }
+  } else if(hi>=0){
+    const uh=uniqueHand(0);
+    if(uh[hi]){
+      selHand=true;selected=hi;
+      const piece=uh[hi].p;
+      vmoves=allMoves(0).filter(m=>m.drop&&m.piece===piece);
+    }
+  }
+  render();
+});
+
+function handlePromoClick(mx,my){
+  const dw=260,dh=130,dx=(CW-dw)/2,dy=(CH-dh)/2;
+  if(my>=dy+55&&my<=dy+93){
+    let chosen=null;
+    if(mx>=dx+18&&mx<=dx+113) chosen=promoQ.mvs.find(m=>m.pro);
+    else if(mx>=dx+148&&mx<=dx+243) chosen=promoQ.mvs.find(m=>!m.pro);
+    if(chosen){
+      promoQ=null;
+      applyMove(chosen,0);
+      selected=null;selHand=false;vmoves=[];
+      render();
+      if(!gover) nextTurn();
+    }
+  }
+}
+
+function xyToBoard(x,y){
+  const c=Math.floor((x-BX)/CS),r=Math.floor((y-BY)/CS);
+  return(inB(r,c))?[r,c]:null;
+}
+
+function xyToHand0(x,y){
+  const uh=uniqueHand(0);if(!uh.length) return -1;
+  const handY=BY+9*CS+14;
+  if(y<handY||y>handY+CS) return -1;
+  const sp=Math.min(54,480/Math.max(uh.length,1));
+  const startX=(CW-uh.length*sp)/2;
+  for(let i=0;i<uh.length;i++)
+    if(x>=startX+i*sp&&x<startX+(i+1)*sp) return i;
+  return -1;
+}
+
+function uniqueHand(o){
+  const m={};
+  hand[o].forEach(p=>m[p]=(m[p]||0)+1);
+  return Object.entries(m).map(([p,n])=>({p,n}));
+}
+
+// ── 描画 ──
+function render(){
+  ctx.clearRect(0,0,CW,CH);
+
+  // 背景
+  const bg=ctx.createRadialGradient(CW/2,CH/2,0,CW/2,CH/2,550);
+  bg.addColorStop(0,'#1c0a00');bg.addColorStop(1,'#060200');
+  ctx.fillStyle=bg;ctx.fillRect(0,0,CW,CH);
+
+  drawBoard();
+  drawAllPieces();
+
+  drawAllHands();
+  drawPlayerLabels();
+  if(promoQ) drawPromoDialog();
+}
+
+function drawBoard(){
+  ctx.shadowColor='#0009';ctx.shadowBlur=20;ctx.shadowOffsetX=4;ctx.shadowOffsetY=5;
+  const g=ctx.createLinearGradient(BX,BY,BX+9*CS,BY+9*CS);
+  g.addColorStop(0,'#edd88a');g.addColorStop(0.5,'#d4a848');g.addColorStop(1,'#c49030');
+  ctx.fillStyle=g;ctx.fillRect(BX,BY,9*CS,9*CS);
+  ctx.shadowBlur=0;ctx.shadowOffsetX=0;ctx.shadowOffsetY=0;
+
+  // ゾーン色
+  ctx.fillStyle='rgba(68,136,255,0.07)';
+  ctx.fillRect(BX+CS,BY+6*CS,5*CS,3*CS);
+  ctx.fillStyle='rgba(255,68,51,0.07)';
+  ctx.fillRect(BX+CS,BY,5*CS,3*CS);
+  ctx.fillStyle='rgba(51,204,85,0.07)';
+  ctx.fillRect(BX+6*CS,BY+CS,3*CS,5*CS);
+
+  // グリッド
+  ctx.strokeStyle='#7a4818';ctx.lineWidth=1;
+  for(let i=0;i<=9;i++){
+    ctx.beginPath();ctx.moveTo(BX+i*CS,BY);ctx.lineTo(BX+i*CS,BY+9*CS);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(BX,BY+i*CS);ctx.lineTo(BX+9*CS,BY+i*CS);ctx.stroke();
+  }
+  ctx.strokeStyle='#4a2808';ctx.lineWidth=3;
+  ctx.strokeRect(BX,BY,9*CS,9*CS);
+
+  // 星目
+  [[2,2],[2,6],[4,4],[6,2],[6,6]].forEach(([r,c])=>{
+    ctx.fillStyle='#4a2808';
+    ctx.beginPath();ctx.arc(BX+c*CS,BY+r*CS,4,0,Math.PI*2);ctx.fill();
+  });
+
+  // ターン枠
+  if(!gover){
+    ctx.strokeStyle=PCOL[turn];ctx.lineWidth=3.5;
+    ctx.shadowColor=PCOL[turn];ctx.shadowBlur=12;
+    ctx.strokeRect(BX-4,BY-4,9*CS+8,9*CS+8);
+    ctx.shadowBlur=0;
+  }
+}
+
+function drawPentagon(cx,cy,w,h){
+  ctx.beginPath();
+  ctx.moveTo(cx,cy-h/2);
+  ctx.lineTo(cx+w/2,cy-h*0.13);
+  ctx.lineTo(cx+w/2,cy+h/2);
+  ctx.lineTo(cx-w/2,cy+h/2);
+  ctx.lineTo(cx-w/2,cy-h*0.13);
+  ctx.closePath();
+}
+
+function drawPieceAt(cx,cy,cell,small=false){
+  const w=small?28:42,h=small?32:48;
+  const {p,o,pr}=cell;
+  const angle=DRAW_ANGLE[o];
+  const ch=pr?(PCP[p]||PC[p]):PC[p];
+
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(angle);
+
+  ctx.shadowColor='#0006';ctx.shadowBlur=5;ctx.shadowOffsetY=2;
+  const grad=ctx.createLinearGradient(0,-h/2,0,h/2);
+  grad.addColorStop(0,'#fffaf0');grad.addColorStop(1,'#e8d095');
+  drawPentagon(0,0,w,h);
+  ctx.fillStyle=grad;ctx.fill();
+  ctx.shadowBlur=0;ctx.shadowOffsetY=0;
+
+  drawPentagon(0,0,w,h);
+  ctx.strokeStyle=PCOL[o];ctx.lineWidth=2;ctx.stroke();
+
+  ctx.fillStyle=pr?'#cc2000':'#1a0800';
+  ctx.font=`bold ${small?12:17}px 'Hiragino Mincho Pro','Yu Mincho',serif`;
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText(ch,0,1);
+  ctx.restore();
+}
+
+function drawAllPieces(){
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell=board[r][c];if(!cell) continue;
+    const cx=BX+c*CS+CS/2,cy=BY+r*CS+CS/2;
+
+    // 直前の移動元（薄く残影）
+    if(lastMove&&!lastMove.drop&&lastMove.fr===r&&lastMove.fc===c){
+      ctx.fillStyle='rgba(255,220,80,0.12)';
+      ctx.fillRect(BX+c*CS+1,BY+r*CS+1,CS-2,CS-2);
+    }
+    // 直前の移動先（オーナー色でグロー）
+    if(lastMove&&lastMove.tr===r&&lastMove.tc===c){
+      const col=PCOL[lastMove.o];
+      ctx.save();
+      ctx.shadowColor=col; ctx.shadowBlur=18;
+      ctx.strokeStyle=col; ctx.lineWidth=2.5;
+      ctx.strokeRect(BX+c*CS+2,BY+r*CS+2,CS-4,CS-4);
+      ctx.restore();
+      // 角の三角マーカー
+      ctx.save();
+      ctx.fillStyle=col+'cc';
+      [[0,0],[1,0],[0,1],[1,1]].forEach(([ci,ri])=>{
+        const px=BX+c*CS+(ci*(CS-1)), py=BY+r*CS+(ri*(CS-1));
+        const sx=ci===0?1:-1, sy=ri===0?1:-1;
+        ctx.beginPath();
+        ctx.moveTo(px,py);
+        ctx.lineTo(px+sx*9,py);
+        ctx.lineTo(px,py+sy*9);
+        ctx.closePath();
+        ctx.fill();
+      });
+      ctx.restore();
+    }
+
+    // 選択中マス
+    if(!selHand&&selected&&selected[0]===r&&selected[1]===c){
+      ctx.fillStyle='rgba(255,255,0,0.28)';
+      ctx.fillRect(BX+c*CS+1,BY+r*CS+1,CS-2,CS-2);
+    }
+    // 脱落プレイヤーの駒はグレーアウト
+    if(eliminated[cell.o]){
+      ctx.save();ctx.globalAlpha=0.3;
+      drawPieceAt(cx,cy,cell);
+      ctx.restore();
+    } else {
+      drawPieceAt(cx,cy,cell);
+    }
+  }
+}
+
+
+
+function drawAllHands(){
+  // P0手駒（下）
+  const uh0=uniqueHand(0);
+  if(uh0.length){
+    const sp=Math.min(54,480/Math.max(uh0.length,1));
+    const startX=(CW-uh0.length*sp)/2;
+    const handY=BY+9*CS+14;
+    uh0.forEach(({p,n},i)=>{
+      const cx=startX+i*sp+sp/2,cy=handY+27;
+      const isSelected=selHand&&selected===i;
+      if(isSelected){ctx.fillStyle='rgba(255,255,80,0.25)';ctx.fillRect(cx-25,cy-26,50,50);}
+      drawPieceAt(cx,cy,{p,o:0,pr:false},true);
+      if(n>1){ctx.fillStyle='#88aaff';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
+    });
+  }
+
+  // P1手駒（上）
+  const uh1=uniqueHand(1);
+  if(uh1.length){
+    const sp=Math.min(54,480/Math.max(uh1.length,1));
+    const startX=(CW-uh1.length*sp)/2;
+    uh1.forEach(({p,n},i)=>{
+      const cx=startX+i*sp+sp/2,cy=68;
+      drawPieceAt(cx,cy,{p,o:1,pr:false},true);
+      if(n>1){ctx.fillStyle='#ff9988';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
+    });
+  }
+
+  // P2手駒（右）
+  const uh2=uniqueHand(2);
+  if(uh2.length){
+    uh2.forEach(({p,n},i)=>{
+      const cx=CW-52,cy=BY+CS*2+i*50+25;
+      drawPieceAt(cx,cy,{p,o:2,pr:false},true);
+      if(n>1){ctx.fillStyle='#88cc88';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
+    });
+  }
+}
+
+function drawPlayerLabels(){
+  const counts=[countPieces(0),countPieces(1),countPieces(2)];
+
+  // ラベル共通スタイル
+  function drawLabel(text,sub,x,y,col,align){
+    ctx.textAlign=align;
+    ctx.fillStyle=col;
+    ctx.font='bold 13px sans-serif';
+    ctx.fillText(text,x,y);
+    ctx.fillStyle=col+'aa';
+    ctx.font='11px monospace';
+    ctx.fillText(sub,x,y+16);
+  }
+
+  // P0（下左）
+  drawLabel(PNAME[0]+(eliminated[0]?' ☠':''),`駒数: ${counts[0]}`,12,CH-30,PCOL[0],'left');
+  // P1（上左）
+  drawLabel(PNAME[1]+(eliminated[1]?' ☠':''),`駒数: ${counts[1]}`,12,22,PCOL[1],'left');
+  // P2（右下）
+  drawLabel(PNAME[2]+(eliminated[2]?' ☠':''),`駒数: ${counts[2]}`,CW-12,CH-30,PCOL[2],'right');
+
+  // 持ち駒ラベル
+  ctx.font='10px serif';ctx.fillStyle='#806040';
+  if(uniqueHand(0).length){ctx.textAlign='center';ctx.fillText('持ち駒',CW/2,BY+9*CS+10);}
+  if(uniqueHand(1).length){ctx.textAlign='center';ctx.fillText('持ち駒',CW/2,15);}
+  if(uniqueHand(2).length){ctx.textAlign='right';ctx.fillText('持',CW-10,BY+CS*2+10);}
+}
+
+function drawPromoDialog(){
+  ctx.fillStyle='rgba(0,0,0,0.75)';ctx.fillRect(0,0,CW,CH);
+  const dw=260,dh=130,dx=(CW-dw)/2,dy=(CH-dh)/2;
+
+  // ダイアログ背景
+  ctx.beginPath();ctx.roundRect(dx,dy,dw,dh,8);
+  ctx.fillStyle='#f5e8c8';ctx.fill();
+  ctx.strokeStyle='#7a4010';ctx.lineWidth=2.5;ctx.stroke();
+
+  // タイトル
+  ctx.fillStyle='#2a1000';ctx.font='bold 18px serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('成りますか？',dx+dw/2,dy+30);
+
+  // 成るボタン（左）
+  ctx.beginPath();ctx.roundRect(dx+18,dy+55,95,38,5);
+  ctx.fillStyle='#7a3000';ctx.fill();
+  ctx.fillStyle='#f5e8c8';ctx.font='bold 16px serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('成る',dx+65,dy+74);
+
+  // 成らないボタン（右）
+  ctx.beginPath();ctx.roundRect(dx+148,dy+55,95,38,5);
+  ctx.fillStyle='#2a4070';ctx.fill();
+  ctx.fillStyle='#f5e8c8';ctx.font='bold 15px serif';
+  ctx.textAlign='center';ctx.textBaseline='middle';
+  ctx.fillText('成らない',dx+195,dy+74);
+}
+
+init();
+</script>
+</body>
+</html>
