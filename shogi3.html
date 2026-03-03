@@ -143,6 +143,7 @@ let viewPlayer=0; // 0=P0視点, 1=P1視点, 2=P2視点
 let humanPlayer=0; // 人間が操作するプレイヤー
 let ENEMY=0;        // AIが敵とみなすプレイヤー（=humanPlayer）
 let humanEliminated=false; // 人間が脱落したらCPU対CPU
+let gameGen=0;
 
 // ── roundRect polyfill ──
 if(!CanvasRenderingContext2D.prototype.roundRect){
@@ -189,7 +190,7 @@ function init(){
   turn=0; gover=false; winner=-1;
   selected=null; vmoves=[]; selHand=false; promoQ=null;
   eliminated=[false,false,false];
-  lastMove=null; collusionTarget=null; humanEliminated=false;
+  lastMove=null; collusionTarget=null; humanEliminated=false; gameGen++;
 
   // P0 (下、前=上)
   // row8: 銀金玉金銀  row7: 飛・角  row6: 歩×5
@@ -222,8 +223,9 @@ function kickAI(){
   if(gover||turn===humanPlayer) return;
   setStatus(pName(turn)+'が考え中...');
   render();
+  const _g=gameGen;
   setTimeout(()=>{
-    if(gover) return;
+    if(_g!==gameGen||gover) return;
     const mv=aiMove(turn,board,hand,eliminated);
     if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
   },400);
@@ -743,7 +745,15 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
   // 全員パスループ防止
   if(skips >= aliveCount) return evalStatic(bd, hd, elim);
 
-  const isHuman = !humanEliminated && (turnPlayer === humanPlayer);
+  // 通常: 人間=最小化、CPU=最大化
+  // CPU対CPU: cpus[0]=最大化、cpus[1]=最小化（evalStaticはcpus[0]視点固定）
+  let isHuman;
+  if(humanEliminated){
+    const liveCpus = [0,1,2].filter(o=>!elim[o]);
+    isHuman = liveCpus.length >= 2 && turnPlayer === liveCpus[1];
+  } else {
+    isHuman = turnPlayer === humanPlayer;
+  }
   const moves = sortMoves(allMovesOn(bd, hd, turnPlayer, elim), bd);
   const nxt = nextAliveOn(elim, turnPlayer);
 
