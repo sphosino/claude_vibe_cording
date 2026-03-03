@@ -137,7 +137,7 @@ const PNAME=PNAME_BASE; // humanPlayerに応じて動的更新
 const DRAW_ANGLE=[0, Math.PI, -Math.PI/2]; // piece facing direction per owner
 
 let board, hand, turn, gover, winner;
-let selected, vmoves, selHand, promoQ, lastMove, collusionTarget=null;
+let selected, vmoves, selHand, promoQ, lastMove;
 let eliminated;
 let viewPlayer=0; // 0=P0視点, 1=P1視点, 2=P2視点
 let humanPlayer=0; // 人間が操作するプレイヤー
@@ -224,7 +224,7 @@ function kickAI(){
   render();
   setTimeout(()=>{
     if(gover) return;
-    const mv=aiMove(turn,board);
+    const mv=aiMove(turn,board,eliminated);
     if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
   },400);
 }
@@ -452,7 +452,7 @@ function applyMove(mv,o){
 
 // ── AI ──
 
-function simApply(bd, hd, mv, o){
+function simApply(bd, hd, elim, mv, o){
 
   // --- 深いコピー ---
   const b = bd.map(r => r.map(c => c ? {...c} : null));
@@ -480,8 +480,10 @@ function simApply(bd, hd, mv, o){
   if(cap && cap.p === 'OU'){
     b[mv.tr][mv.tc] = { p: cell.p, o, pr: mv.pro || cell.pr };
     b[mv.fr][mv.fc] = null;
+    const newElim = elim.slice();
+    newElim[cap.o] = true;
 
-    return { b, h, tryWin:true };
+    return { b, h, elim:newElim, tryWin:true };
   }
 
   // =====================
@@ -587,6 +589,7 @@ function evalStatic(b, h, elim){
   elim = elim || eliminated;
 
   if(humanEliminated){
+
     // CPU対CPU: P1の視点で評価（P1有利=高スコア）
     // 生きてるCPUを特定
     const cpus = [0,1,2].filter(o=>!elim[o]);
@@ -658,8 +661,8 @@ function evalStatic(b, h, elim){
 }
 
 // 合法手生成（盤面引数版）
-function allMovesOn(bd,hd,o){
-  if(eliminated[o]) return [];
+function allMovesOn(bd,hd,o,elim){
+  if(elim[o]) return [];
   const res=[];
   // 盤上の駒
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
@@ -677,7 +680,10 @@ function allMovesOn(bd,hd,o){
   // 持ち駒（AI探索時は王周辺に絞って探索爆発を防ぐ）
   const seen=new Set();
   // 敵の王位置を取得（打ち駒は王周辺優先）
-  const [ekr,ekc]=findKingOn(bd, humanPlayer);
+  let ekr=-1,ekc=-1
+  if(!humanEliminated){
+    [ekr,ekc] = findKingOn(bd, humanPlayer);
+  }
   hd[o].forEach(piece=>{
     if(seen.has(piece)) return; seen.add(piece);
     for(let r=0;r<9;r++) for(let c=0;c<9;c++){
@@ -719,11 +725,6 @@ function nextAliveOn(elim, current){
   return -1;
 }
 
-// allMovesOn のelim対応版
-function allMovesOnE(bd, hd, o, elim){
-  if(elim[o]) return [];
-  return allMovesOn(bd, hd, o);
-}
 
 // ミニマックス探索
 // depth = 残り手数（1手ごとに-1）
@@ -739,7 +740,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
   if(skips >= aliveCount) return evalStatic(bd, hd, elim);
 
   const isHuman = !humanEliminated && (turnPlayer === humanPlayer);
-  const moves = sortMoves(allMovesOnE(bd, hd, turnPlayer, elim), bd);
+  const moves = sortMoves(allMovesOn(bd, hd, turnPlayer, elim), bd);
   const nxt = nextAliveOn(elim, turnPlayer);
 
   if(!moves.length){
@@ -750,7 +751,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
   if(isHuman){
     let best = Infinity;
     for(const mv of moves){
-      const {b:nb, h:nh, tryWin} = simApply(bd, hd, mv, turnPlayer);
+      const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
       if(tryWin) return -1500000;
       const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
       if(cap && cap.p === 'OU') return -2000000;
@@ -763,7 +764,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
   } else {
     let best = -Infinity;
     for(const mv of moves){
-      const {b:nb, h:nh, tryWin} = simApply(bd, hd, mv, turnPlayer);
+      const {b:nb, h:nh, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
       if(tryWin) return 1800000;
       const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
       if(cap && cap.p === 'OU'){
@@ -787,12 +788,12 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
 }
 
 // 動いた後に王がすぐ取られるかチェック（自爆防止）
-function kingWouldBeCaptured(bd, hd, o){
+function kingWouldBeCaptured(bd, hd, o, elim){
   const [kr,kc]=findKingOn(bd,o);
   if(kr<0) return false;
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=bd[r][c];
-    if(!cell||cell.o===o||eliminated[cell.o]) continue;
+    if(!cell||cell.o===o||elim[cell.o]) continue;
     const dests=rawMoves(bd,r,c);
 
     if(dests.some(([mr,mc])=>mr===kr&&mc===kc)) return true;
@@ -800,14 +801,14 @@ function kingWouldBeCaptured(bd, hd, o){
   return false;
 }
 
-function aiMove(o,bd){
+function aiMove(o,bd,elim){
   let moves=allMoves(o,bd);
   if(!moves.length) return null;
 
   // 自爆防止: 動かした後に王が取られる手は除外
   const safeMoves=moves.filter(mv=>{
-    const {b:nb,h:nh}=simApply(board,hand,mv,o);
-    return !kingWouldBeCaptured(nb,nh,o);
+    const {b:nb,h:nh}=simApply(bd,hand,elim,mv,o);
+    return !kingWouldBeCaptured(nb,nh,o, elim);
   });
   // 全部危険なら仕方なく元のリストから選ぶ
   if(safeMoves.length>0) moves=safeMoves;
@@ -828,8 +829,8 @@ function aiMove(o,bd){
       }
     }
 
-    const {b:nb,h:nh}=simApply(board,hand,mv,o);
-    const nxt = nextAliveOn(eliminated, o);
+    const {b:nb,h:nh}=simApply(bd,hand,elim,mv,o);
+    const nxt = nextAliveOn(elim, o);
     const aliveNow = eliminated.filter(e=>!e).length;
     const searchDepth = aliveNow <= 2 ? 2 : 3;
     const v = minimaxRound(nb, nh, eliminated.slice(), searchDepth, -Infinity, Infinity, nxt);
