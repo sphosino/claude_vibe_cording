@@ -108,6 +108,10 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
     <canvas id="c"></canvas>
     <div id="btnRow">
       <button onclick="init()">盤面を初期化</button>
+      <button id="hb0" onclick="setHumanPlayer(0)" style="background:#6a3500">🔵 青を操作</button>
+      <button id="hb1" onclick="setHumanPlayer(1)">🔴 赤を操作</button>
+      <button id="hb2" onclick="setHumanPlayer(2)">🟢 緑を操作</button>
+      <button onclick="setView(viewPlayer===2?0:viewPlayer+1)">👁 視点切替</button>
     </div>
   </div>
 <script>
@@ -128,12 +132,16 @@ const PVP ={FU:200,GIN:50,KAKU:500,HI:450};
 const PC  ={FU:'歩',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
 const PCP ={FU:'と',GIN:'全',KAKU:'馬',HI:'龍'};
 const PCOL=['#4488ff','#ff4433','#33cc55'];
-const PNAME=['先手(あなた)','CPU①','CPU②'];
+const PNAME_BASE=['先手','CPU①','CPU②'];
+const PNAME=PNAME_BASE; // humanPlayerに応じて動的更新
 const DRAW_ANGLE=[0, Math.PI, -Math.PI/2]; // piece facing direction per owner
 
 let board, hand, turn, gover, winner;
 let selected, vmoves, selHand, promoQ, lastMove, collusionTarget=null;
 let eliminated;
+let viewPlayer=0; // 0=P0視点, 1=P1視点, 2=P2視点
+let humanPlayer=0; // 人間が操作するプレイヤー
+let ENEMY=0;        // AIが敵とみなすプレイヤー（=humanPlayer）
 
 // ── roundRect polyfill ──
 if(!CanvasRenderingContext2D.prototype.roundRect){
@@ -156,6 +164,22 @@ function rotDir(dr,dc,o){
   if(o===1) return [-dr,-dc];       // forward=down → 180°
   return [-dc,dr];                  // forward=left → 90°CCW
 }
+
+// ── 視点変換 ──
+// 論理座標 → 物理(画面)座標
+function logToPhys(r, c){
+  if(viewPlayer===0) return [r, c];
+  if(viewPlayer===1) return [8-r, 8-c];
+  return [c, 8-r]; // P2: 右側が手前
+}
+// 物理(画面)座標 → 論理座標（クリック用）
+function physToLog(pr, pc){
+  if(viewPlayer===0) return [pr, pc];
+  if(viewPlayer===1) return [8-pr, 8-pc];
+  return [8-pc, pr];
+}
+// 視点ごとの駒の回転追加量
+const VIEW_ROT = [0, Math.PI, Math.PI/2];
 
 // ── 初期化 ──
 function init(){
@@ -184,11 +208,39 @@ function init(){
    [2,7,'KAKU'],[6,7,'HI']].forEach(([r,c,p])=>board[r][c]={p,o:2,pr:false});
   for(let r=2;r<=6;r++) board[r][6]={p:'FU',o:2,pr:false};
 
-  setStatus(PNAME[0]+'の番です');
+  viewPlayer=humanPlayer;
+  ENEMY=humanPlayer;
+  setStatus(pName(humanPlayer)+'の番です');
   render();
+  // 人間がP0以外のとき、最初のAIターンをキック
+  if(humanPlayer!==0) setTimeout(()=>kickAI(),300);
+}
+
+function setView(vp){ viewPlayer=vp; render(); }
+function kickAI(){
+  if(gover||turn===humanPlayer) return;
+  setStatus(pName(turn)+'が考え中...');
+  render();
+  setTimeout(()=>{
+    if(gover) return;
+    const mv=aiMove(turn,board);
+    if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
+  },400);
+}
+function setHumanPlayer(p){
+  humanPlayer=p; ENEMY=p; viewPlayer=p;
+  PNAME[p]=PNAME_BASE[p]+'(あなた)';
+  [0,1,2].filter(i=>i!==p).forEach(i=>PNAME[i]=PNAME_BASE[i]);
+  // ボタンのハイライト更新
+  [0,1,2].forEach(i=>{
+    const btn=document.getElementById('hb'+i);
+    if(btn) btn.style.background=i===p?'#6a3500':'#3a1500';
+  });
+  init();
 }
 
 function setStatus(msg){document.getElementById('info').textContent=msg;}
+function pName(o){ return o===humanPlayer?'あなた':PNAME_BASE[o]; }
 
 // ── 駒数カウント（手駒含む） ──
 function countPieces(o){
@@ -349,9 +401,9 @@ function applyMove(mv,o){
       const alive=eliminated.filter(e=>!e).length;
       if(alive<=1){
         gover=true; winner=o;
-        setStatus('🎉 '+PNAME[o]+'の勝ち！');
+        setStatus('🎉 '+pName(o)+'の勝ち！');
       } else {
-        setStatus(PNAME[cap.o]+'が脱落！残り'+alive+'人');
+        setStatus(pName(cap.o)+'が脱落！残り'+alive+'人');
       }
       render();
       return;
@@ -374,7 +426,7 @@ function applyMove(mv,o){
     if(o===2 && tc2<=0) tryWin=true;   // P2の王が左段へ
     if(tryWin){
       gover=true; winner=o;
-      setStatus('🏯 入玉！'+PNAME[o]+'の勝ち！');
+      setStatus('🏯 入玉！'+pName(o)+'の勝ち！');
       render();
       return;
     }
@@ -382,7 +434,6 @@ function applyMove(mv,o){
 }
 
 // ── AI ──
-const ENEMY=0;
 
 function simApply(bd, hd, mv, o){
 
@@ -673,7 +724,6 @@ function kingWouldBeCaptured(bd, hd, o){
 }
 
 function aiMove(o,bd){
-console.time("AI"+o);
   let moves=allMoves(o,bd);
   if(!moves.length) return null;
 
@@ -712,7 +762,6 @@ console.time("AI"+o);
     if(v>bestScore){bestScore=v;best=mv;}
   }
 
-console.timeEnd("AI"+o);
   return best;
 }
 
@@ -730,26 +779,17 @@ function nextTurn(bd) {
   turn = next;
   render(); // 枠色更新
 
-  if (turn === 0) {
-    if (!allMoves(0,bd).length) {
+  if (turn === humanPlayer) {
+    if (!allMoves(humanPlayer,bd).length) {
       setStatus('手がありません（スキップ）');
       setTimeout(() => {
         if (!gover) nextTurn(bd);
       }, 800);
     } else {
-      setStatus(PNAME[0] + 'の番です');
+      setStatus(PNAME[humanPlayer] + 'の番です');
     }
   } else {
-    setStatus(PNAME[turn] + 'が考え中...');
-    setTimeout(() => {
-      if (gover) return;
-      const mv = aiMove(turn,bd);
-      if (mv) {
-        applyMove(mv, turn);
-        render();
-        if (!gover) nextTurn(bd);
-      }
-    }, 400);
+    kickAI();
   }
 }
 
@@ -759,7 +799,7 @@ canvas.addEventListener('click',e=>{
   const mx=e.clientX-rect.left, my=e.clientY-rect.top;
 
   if(promoQ){handlePromoClick(mx,my);return;}
-  if(gover||turn!==0) return;
+  if(gover||turn!==humanPlayer) return;
 
   const bc=xyToBoard(mx,my);
   const hi=xyToHand0(mx,my);
@@ -770,7 +810,7 @@ canvas.addEventListener('click',e=>{
       const matching=vmoves.filter(m=>m.tr===tr&&m.tc===tc);
       if(matching.length){
         if(matching.length===2){promoQ={mvs:matching};render();return;}
-        applyMove(matching[0],0);
+        applyMove(matching[0],humanPlayer);
         selected=null;selHand=false;vmoves=[];
         render();
         if(!gover) nextTurn(board);
@@ -783,16 +823,16 @@ canvas.addEventListener('click',e=>{
   if(bc){
     const [r,c]=bc;
     const cell=board[r][c];
-    if(cell?.o===0){
+    if(cell?.o===humanPlayer){
       selected=[r,c];selHand=false;
-      vmoves=allMoves(0,board).filter(m=>!m.drop&&m.fr===r&&m.fc===c);
+      vmoves=allMoves(humanPlayer,board).filter(m=>!m.drop&&m.fr===r&&m.fc===c);
     }
   } else if(hi>=0){
-    const uh=uniqueHand(0);
+    const uh=uniqueHand(humanPlayer);
     if(uh[hi]){
       selHand=true;selected=hi;
       const piece=uh[hi].p;
-      vmoves=allMoves(0,board).filter(m=>m.drop&&m.piece===piece);
+      vmoves=allMoves(humanPlayer,board).filter(m=>m.drop&&m.piece===piece);
     }
   }
   render();
@@ -806,7 +846,7 @@ function handlePromoClick(mx,my){
     else if(mx>=dx+148&&mx<=dx+243) chosen=promoQ.mvs.find(m=>!m.pro);
     if(chosen){
       promoQ=null;
-      applyMove(chosen,0);
+      applyMove(chosen,humanPlayer);
       selected=null;selHand=false;vmoves=[];
       render();
       if(!gover) nextTurn(board);
@@ -815,12 +855,14 @@ function handlePromoClick(mx,my){
 }
 
 function xyToBoard(x,y){
-  const c=Math.floor((x-BX)/CS),r=Math.floor((y-BY)/CS);
-  return(inB(r,c))?[r,c]:null;
+  const pc=Math.floor((x-BX)/CS), pr=Math.floor((y-BY)/CS);
+  if(!inB(pr,pc)) return null;
+  const [lr,lc]=physToLog(pr,pc);
+  return inB(lr,lc)?[lr,lc]:null;
 }
 
 function xyToHand0(x,y){
-  const uh=uniqueHand(0);if(!uh.length) return -1;
+  const uh=uniqueHand(humanPlayer);if(!uh.length) return -1;
   const handY=BY+9*CS+14;
   if(y<handY||y>handY+CS) return -1;
   const sp=Math.min(54,480/Math.max(uh.length,1));
@@ -920,7 +962,7 @@ function drawPentagon(cx,cy,w,h){
 function drawPieceAt(cx,cy,cell,small=false){
   const w=small?28:42,h=small?32:48;
   const {p,o,pr}=cell;
-  const angle=DRAW_ANGLE[o];
+  const angle=DRAW_ANGLE[o]+VIEW_ROT[viewPlayer];
   const ch=pr?(PCP[p]||PC[p]):PC[p];
 
   ctx.save();
@@ -947,12 +989,13 @@ function drawPieceAt(cx,cy,cell,small=false){
 function drawAllPieces(){
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=board[r][c];if(!cell) continue;
-    const cx=BX+c*CS+CS/2,cy=BY+r*CS+CS/2;
+    const [pr,pc]=logToPhys(r,c);
+    const cx=BX+pc*CS+CS/2, cy=BY+pr*CS+CS/2;
 
     // 直前の移動元（薄く残影）
     if(lastMove&&!lastMove.drop&&lastMove.fr===r&&lastMove.fc===c){
       ctx.fillStyle='rgba(255,220,80,0.12)';
-      ctx.fillRect(BX+c*CS+1,BY+r*CS+1,CS-2,CS-2);
+      ctx.fillRect(BX+pc*CS+1,BY+pr*CS+1,CS-2,CS-2);
     }
     // 直前の移動先（オーナー色でグロー）
     if(lastMove&&lastMove.tr===r&&lastMove.tc===c){
@@ -960,13 +1003,12 @@ function drawAllPieces(){
       ctx.save();
       ctx.shadowColor=col; ctx.shadowBlur=18;
       ctx.strokeStyle=col; ctx.lineWidth=2.5;
-      ctx.strokeRect(BX+c*CS+2,BY+r*CS+2,CS-4,CS-4);
+      ctx.strokeRect(BX+pc*CS+2,BY+pr*CS+2,CS-4,CS-4);
       ctx.restore();
-      // 角の三角マーカー
       ctx.save();
       ctx.fillStyle=col+'cc';
       [[0,0],[1,0],[0,1],[1,1]].forEach(([ci,ri])=>{
-        const px=BX+c*CS+(ci*(CS-1)), py=BY+r*CS+(ri*(CS-1));
+        const px=BX+pc*CS+(ci*(CS-1)), py=BY+pr*CS+(ri*(CS-1));
         const sx=ci===0?1:-1, sy=ri===0?1:-1;
         ctx.beginPath();
         ctx.moveTo(px,py);
@@ -978,10 +1020,10 @@ function drawAllPieces(){
       ctx.restore();
     }
 
-    // 選択中マス
-    if(!selHand&&selected&&selected[0]===r&&selected[1]===c){
+    // 選択中マス（操作プレイヤーの駒のみ）
+    if(!selHand&&selected&&selected[0]===r&&selected[1]===c&&cell?.o===humanPlayer){
       ctx.fillStyle='rgba(255,255,0,0.28)';
-      ctx.fillRect(BX+c*CS+1,BY+r*CS+1,CS-2,CS-2);
+      ctx.fillRect(BX+pc*CS+1,BY+pr*CS+1,CS-2,CS-2);
     }
     // 脱落プレイヤーの駒はグレーアウト
     if(eliminated[cell.o]){
@@ -992,53 +1034,84 @@ function drawAllPieces(){
       drawPieceAt(cx,cy,cell);
     }
   }
+
+  // 移動候補マスのハイライト
+  vmoves.forEach(m=>{
+    const [pr,pc]=logToPhys(m.tr,m.tc);
+    const cx=BX+pc*CS, cy=BY+pr*CS;
+    const cap=!m.drop&&board[m.tr]?.[m.tc];
+    if(cap){
+      ctx.fillStyle='rgba(255,80,0,0.22)';ctx.fillRect(cx+1,cy+1,CS-2,CS-2);
+      ctx.strokeStyle='#ff6600';ctx.lineWidth=2.5;ctx.strokeRect(cx+1,cy+1,CS-2,CS-2);
+    } else {
+      ctx.fillStyle='rgba(100,220,100,0.12)';ctx.fillRect(cx+1,cy+1,CS-2,CS-2);
+      ctx.fillStyle='rgba(80,210,80,0.75)';
+      ctx.beginPath();ctx.arc(cx+CS/2,cy+CS/2,8,0,Math.PI*2);ctx.fill();
+    }
+  });
 }
 
 
 
+function drawHandRow(o, side){
+  // side: 'bottom'|'top'|'right'|'left'
+  const uh=uniqueHand(o); if(!uh.length) return;
+  const sp=Math.min(54,480/Math.max(uh.length,1));
+  const isVert=(side==='right'||side==='left');
+  const startX=(CW-uh.length*sp)/2;
+  const col=PCOL[o];
+
+  ctx.font='9px serif'; ctx.fillStyle=col+'aa'; ctx.textAlign='center';
+  if(side==='bottom'){
+    ctx.fillText('持ち駒',CW/2,BY+9*CS+10);
+    uh.forEach(({p,n},i)=>{
+      const cx=startX+i*sp+sp/2, cy=BY+9*CS+40;
+      const isSel=selHand&&o===0&&selected===i;
+      if(isSel){ctx.fillStyle='rgba(255,255,80,0.25)';ctx.fillRect(cx-25,cy-26,50,50);}
+      drawPieceAt(cx,cy,{p,o,pr:false},true);
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
+    });
+  } else if(side==='top'){
+    ctx.fillText('持ち駒',CW/2,15);
+    uh.forEach(({p,n},i)=>{
+      const cx=startX+i*sp+sp/2, cy=38;
+      drawPieceAt(cx,cy,{p,o,pr:false},true);
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
+    });
+  } else if(side==='right'){
+    ctx.textAlign='right'; ctx.fillText('持',CW-8,BY+CS*1.5);
+    uh.forEach(({p,n},i)=>{
+      const cx=CW-52, cy=BY+CS*2+i*50+25;
+      drawPieceAt(cx,cy,{p,o,pr:false},true);
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
+    });
+  } else { // left
+    ctx.textAlign='left'; ctx.fillText('持',12,BY+CS*1.5);
+    uh.forEach(({p,n},i)=>{
+      const cx=50, cy=BY+CS*2+i*50+25;
+      drawPieceAt(cx,cy,{p,o,pr:false},true);
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
+    });
+  }
+}
+
 function drawAllHands(){
-  // P0手駒（下）
-  const uh0=uniqueHand(0);
-  if(uh0.length){
-    const sp=Math.min(54,480/Math.max(uh0.length,1));
-    const startX=(CW-uh0.length*sp)/2;
-    const handY=BY+9*CS+14;
-    uh0.forEach(({p,n},i)=>{
-      const cx=startX+i*sp+sp/2,cy=handY+27;
-      const isSelected=selHand&&selected===i;
-      if(isSelected){ctx.fillStyle='rgba(255,255,80,0.25)';ctx.fillRect(cx-25,cy-26,50,50);}
-      drawPieceAt(cx,cy,{p,o:0,pr:false},true);
-      if(n>1){ctx.fillStyle='#88aaff';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
-    });
-  }
-
-  // P1手駒（上）
-  const uh1=uniqueHand(1);
-  if(uh1.length){
-    const sp=Math.min(54,480/Math.max(uh1.length,1));
-    const startX=(CW-uh1.length*sp)/2;
-    uh1.forEach(({p,n},i)=>{
-      const cx=startX+i*sp+sp/2,cy=68;
-      drawPieceAt(cx,cy,{p,o:1,pr:false},true);
-      if(n>1){ctx.fillStyle='#ff9988';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
-    });
-  }
-
-  // P2手駒（右）
-  const uh2=uniqueHand(2);
-  if(uh2.length){
-    uh2.forEach(({p,n},i)=>{
-      const cx=CW-52,cy=BY+CS*2+i*50+25;
-      drawPieceAt(cx,cy,{p,o:2,pr:false},true);
-      if(n>1){ctx.fillStyle='#88cc88';ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
-    });
+  // P0（プレイヤー）の手駒は常に下
+  // 他の手駒は視点に合わせて配置
+  // 操作プレイヤーの手駒は常に下、他は視点に合わせて配置
+  const others=[0,1,2].filter(p=>p!==humanPlayer);
+  drawHandRow(humanPlayer,'bottom');
+  if(viewPlayer===0){
+    drawHandRow(1,'top'); drawHandRow(2,'right');
+  } else if(viewPlayer===1){
+    drawHandRow(0,'top'); drawHandRow(2,'left');
+  } else {
+    drawHandRow(0,'top'); drawHandRow(1,'left');
   }
 }
 
 function drawPlayerLabels(){
   const counts=[countPieces(0),countPieces(1),countPieces(2)];
-
-  // ラベル共通スタイル
   function drawLabel(text,sub,x,y,col,align){
     ctx.textAlign=align;
     ctx.fillStyle=col;
@@ -1048,19 +1121,13 @@ function drawPlayerLabels(){
     ctx.font='11px monospace';
     ctx.fillText(sub,x,y+16);
   }
-
-  // P0（下左）
   drawLabel(PNAME[0]+(eliminated[0]?' ☠':''),`駒数: ${counts[0]}`,12,CH-30,PCOL[0],'left');
-  // P1（上左）
   drawLabel(PNAME[1]+(eliminated[1]?' ☠':''),`駒数: ${counts[1]}`,12,22,PCOL[1],'left');
-  // P2（右下）
   drawLabel(PNAME[2]+(eliminated[2]?' ☠':''),`駒数: ${counts[2]}`,CW-12,CH-30,PCOL[2],'right');
-
-  // 持ち駒ラベル
-  ctx.font='10px serif';ctx.fillStyle='#806040';
-  if(uniqueHand(0).length){ctx.textAlign='center';ctx.fillText('持ち駒',CW/2,BY+9*CS+10);}
-  if(uniqueHand(1).length){ctx.textAlign='center';ctx.fillText('持ち駒',CW/2,15);}
-  if(uniqueHand(2).length){ctx.textAlign='right';ctx.fillText('持',CW-10,BY+CS*2+10);}
+  // 視点表示
+  const viewNames=['P0視点','P1視点','P2視点'];
+  ctx.textAlign='right'; ctx.fillStyle='#806040aa'; ctx.font='11px monospace';
+  ctx.fillText('👁 '+viewNames[viewPlayer], CW-12, 22);
 }
 
 function drawPromoDialog(){
