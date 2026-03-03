@@ -368,6 +368,59 @@ const CLR = {
   light: 'rgba(255,200,100,0.04)',
 };
 
+
+// ===== BALANCE CONSTANTS =====
+
+// --- Map / Visibility ---
+const VIS_RADIUS   = 6;    // player sight radius (tiles)
+
+// --- Player initial stats ---
+const PLAYER_INIT_HP       = 45;
+const PLAYER_INIT_ATK      = 6;
+const PLAYER_INIT_DEF      = 1;
+const PLAYER_INIT_EXP_NEXT = 10;
+const PLAYER_INIT_HUNGER   = 70;   // 0~100; 70 = normal
+
+// --- Level up ---
+const LEVEL_UP_EXP_MULT  = 1.5;  // expNext multiplier per level
+const LEVEL_UP_HP_BONUS  = 12;   // maxHp gained per level
+const LEVEL_UP_ATK_BONUS = 2;    // baseAtk gained per level
+
+// --- Passive regen ---
+const REGEN_INTERVAL = 8;   // turns between +1 HP regen
+
+// --- Floors ---
+const MAX_FLOORS            = 10;
+const ENEMY_SCALE_PER_FLOOR = 0.18;  // enemy stat growth per floor
+
+// --- Miasma ---
+const MIASMA_START_MAX    = 100;  // turns on floor 1
+const MIASMA_START_MIN    = 40;   // minimum turns (deepest floor)
+const MIASMA_WARN_AT      = 30;   // turns left → warning
+const MIASMA_DANGER_AT    = 10;   // turns left → final warning
+
+// --- Hunger ---
+const STARVATION_DMG      = 3;   // HP lost per turn while starving
+const FOOD_HUNGER_RESTORE = 40;  // hunger restored by one food item
+
+// --- Combat ---
+const BOMB_RADIUS = 3;  // blast radius (Manhattan distance)
+
+// --- Boss ---
+const BOSS_HP               = 700;
+const BOSS_ATK              = 28;
+const BOSS_DEF              = 14;
+const BOSS_EXP              = 300;
+const BOSS_GOLD             = 500;
+const BOSS_PHASE2_THRESHOLD = 0.5;   // HP fraction that triggers phase 2
+const BOSS_PHASE2_ATK_MULT  = 1.5;   // ATK multiplier in phase 2
+
+// --- UI / timing ---
+const AUTO_WALK_INTERVAL_MS = 120;   // ms between auto-walk steps
+const LOG_MAX_LINES         = 30;    // max entries in battle log
+const TIP_CYCLE_MS          = 10000; // ms between tip rotations
+const SWIPE_THRESHOLD_PX    = 20;    // min swipe distance (pixels)
+
 // ===== STATE =====
 let G = {}; // game state
 
@@ -376,12 +429,12 @@ function initState() {
     floor: 1,
     player: {
       x: 1, y: 1,
-      hp: 45, maxHp: 45,
-      baseAtk: 6, baseDef: 1,  // ベース値（永続強化で増える）
-      atk: 6, def: 1,           // 実効値（満腹度で変動）
-      lv: 1, exp: 0, expNext: 10,
+      hp: PLAYER_INIT_HP, maxHp: PLAYER_INIT_HP,
+      baseAtk: PLAYER_INIT_ATK, baseDef: PLAYER_INIT_DEF,  // ベース値（永続強化で増える）
+      atk: PLAYER_INIT_ATK, def: PLAYER_INIT_DEF,           // 実効値（満腹度で変動）
+      lv: 1, exp: 0, expNext: PLAYER_INIT_EXP_NEXT,
       gold: 0,
-      hunger: 70,               // 満腹度 0〜100、70（普通）でスタート
+      hunger: PLAYER_INIT_HUNGER,          // 満腹度 0〜100
       inv: [{ type: 'potion', name: 'ポーション', heal: 20, col: '#00ff88', icon: '🧪' },
             { type: 'food', name: '食料', col: '#ffaa44', icon: '🍖' }],
       weapon: null, armor: null,
@@ -389,8 +442,8 @@ function initState() {
     map: [], enemies: [], items: [],
     explored: [],
     turn: 0,
-    miasmaMax: 120,
-    miasmaLeft: 120,
+    miasmaMax: MIASMA_START_MAX,
+    miasmaLeft: MIASMA_START_MAX,
     miasmaOver: 0,
     animQueue: [],
     msg: [],
@@ -468,7 +521,7 @@ function genMap(floor) {
 
   // Enemies
   const enemies = [];
-  const isBossFloor = floor === 10;
+  const isBossFloor = floor === MAX_FLOORS;
   for (const r of rooms.slice(1)) {
     const isLastRoom = r === lastRoom;
 
@@ -531,9 +584,9 @@ function createEnemy(x, y, floor, isBoss) {
     return {
       x, y, isBoss: true,
       name: '🔥魔王ドゥーム', glyph: 'B', col: '#ff44ff',
-      maxHp: 700, hp: 700,
-      atk: 28, def: 14,
-      exp: 300, gold: 500,
+      maxHp: BOSS_HP, hp: BOSS_HP,
+      atk: BOSS_ATK, def: BOSS_DEF,
+      exp: BOSS_EXP, gold: BOSS_GOLD,
       sight: 10, chaseLimit: 999, moveChance: 1.0, style: 'chase',
       aiState: 'idle', chaseCounter: 0, lastKnown: null,
       spawnX: x, spawnY: y, patrolDir: [1,0], patrolTimer: 0,
@@ -545,7 +598,7 @@ function createEnemy(x, y, floor, isBoss) {
   const tidx = Math.min(Math.floor(floor / 2), types.length - 1);
   const spread = Math.floor(Math.random() * Math.min(2, types.length - tidx));
   const t = types[Math.min(tidx + spread, types.length - 1)];
-  const scale = 1 + (floor - 1) * 0.18;  // 0.13→0.18
+  const scale = 1 + (floor - 1) * ENEMY_SCALE_PER_FLOOR;
   
   return {
     x, y, isBoss: false,
@@ -629,7 +682,7 @@ function drawGame() {
   ctx.fillRect(0, 0, W, H);
   
   const p = G.player;
-  const visRadius = 6;
+  const visRadius = VIS_RADIUS;
   
   // Compute visibility
   const visible = Array.from({length: ROWS}, () => Array(COLS).fill(false));
@@ -817,7 +870,7 @@ function log(msg, cls='') {
   d.className = 'log-line ' + cls;
   d.textContent = msg;
   box.prepend(d);
-  if (box.children.length > 30) box.lastChild.remove();
+  if (box.children.length > LOG_MAX_LINES) box.lastChild.remove();
 }
 
 // ===== UPDATE UI =====
@@ -945,7 +998,7 @@ function startGame() {
   log('⚔️ ダンジョンに入った！魔王を討て！', 'log-info');
   
   cycleTip();
-  setInterval(cycleTip, 10000);
+  setInterval(cycleTip, TIP_CYCLE_MS);
   
   requestAnimationFrame(loop);
 }
@@ -962,7 +1015,7 @@ function loadFloor(floor) {
   G.turn = 0;
 
   // 1F=100ターン → 10F=40ターン の直線
-  G.miasmaMax = Math.max(40, Math.round(100 - (floor - 1) * 60 / 9));
+  G.miasmaMax = Math.max(MIASMA_START_MIN, Math.round(MIASMA_START_MAX - (floor - 1) * (MIASMA_START_MAX - MIASMA_START_MIN) / (MAX_FLOORS - 1)));
   G.miasmaLeft = G.miasmaMax;
   G.miasmaOver = 0;
 
@@ -978,7 +1031,7 @@ function loadFloor(floor) {
 
 function updateExplored() {
   const p = G.player;
-  const r = 6;
+  const r = VIS_RADIUS;
   for (let dy = -r; dy <= r; dy++) {
     for (let dx = -r; dx <= r; dx++) {
       const nx = p.x + dx, ny = p.y + dy;
@@ -1030,7 +1083,7 @@ function tryMove(dx, dy) {
 
   // Passive regen: +1 HP every 5 turns
   G.turn = (G.turn || 0) + 1;
-  if (G.turn % 8 === 0 && G.player.hp < G.player.maxHp) {  // 5→8ターンに1回
+  if (G.turn % REGEN_INTERVAL === 0 && G.player.hp < G.player.maxHp) {
     G.player.hp = Math.min(G.player.maxHp, G.player.hp + 1);
   }
 
@@ -1061,9 +1114,9 @@ function attackEnemy(e) {
   log(`⚔️ ${e.name}に${dmg}ダメージ！ (残${e.hp}HP)`, 'log-dmg');
 
   // Boss phase 2 trigger
-  if (e.isBoss && !e.phase2 && e.hp <= e.maxHp * 0.5) {
+  if (e.isBoss && !e.phase2 && e.hp <= e.maxHp * BOSS_PHASE2_THRESHOLD) {
     e.phase2 = true;
-    e.atk = Math.floor(e.atk * 1.5);
+    e.atk = Math.floor(e.atk * BOSS_PHASE2_ATK_MULT);
     e.moveChance = 1.0;
     e.col = '#ff0000';
     log('💢 魔王が激怒した！！ ATKが1.5倍になった！！', 'log-dmg');
@@ -1308,7 +1361,7 @@ function useItemAtIndex(idx) {
 
   // 爆弾系
   } else if (item.type === 'bomb' || item.type === 'superbomb') {
-    const hits = G.enemies.filter(e => Math.abs(e.x-p.x)+Math.abs(e.y-p.y) <= 3);
+    const hits = G.enemies.filter(e => Math.abs(e.x-p.x)+Math.abs(e.y-p.y) <= BOMB_RADIUS);
     const label = item.type === 'superbomb' ? '💥超爆弾' : '💣爆弾';
     if (!hits.length) { log(`${label}！ …誰もいなかった`, 'log-info'); }
     else {
@@ -1347,7 +1400,7 @@ function useItemAtIndex(idx) {
   // 食料
   } else if (item.type === 'food') {
     const prev = G.player.hunger;
-    G.player.hunger = Math.min(100, G.player.hunger + 40);
+    G.player.hunger = Math.min(100, G.player.hunger + FOOD_HUNGER_RESTORE);
     recalcStats();
     log(`🍖 食料を食べた！ 満腹度+${G.player.hunger - prev} (${G.player.hunger}/100)`, 'log-heal');
 
@@ -1406,8 +1459,8 @@ function tickHunger() {
 
   // 飢餓時はHP削れる（毎ターン）
   if (newStage === 'starving') {
-    p.hp -= 3;
-    log('💀 飢餓！ HP-3！！飯を食え！', 'log-dmg');
+    p.hp -= STARVATION_DMG;
+    log(`💀 飢餓！ HP-${STARVATION_DMG}！！飯を食え！`, 'log-dmg');
     if (p.hp <= 0) { gameover(); }
   }
 
@@ -1419,10 +1472,10 @@ function tickMiasma() {
   if (G.miasmaLeft > 0) {
     G.miasmaLeft--;
 
-    if (G.miasmaLeft === 30) {
+    if (G.miasmaLeft === MIASMA_WARN_AT) {
       log('⚠️ 瘴気が迫っている…！急いで階段を降りろ！', 'log-dmg');
       document.getElementById('miasma-box').classList.add('miasma-warning');
-    } else if (G.miasmaLeft === 10) {
+    } else if (G.miasmaLeft === MIASMA_DANGER_AT) {
       log('💀 瘴気があと10ターンで満ちる！！', 'log-dmg');
     } else if (G.miasmaLeft === 0) {
       log('☠️ 瘴気がフロアを覆い尽くした！！毎ターンダメージを受ける！', 'log-dmg');
@@ -1444,12 +1497,12 @@ function checkLevelUp() {
   while (p.exp >= p.expNext) {
     p.exp -= p.expNext;
     p.lv++;
-    p.expNext = Math.floor(p.expNext * 1.5);
-    p.maxHp += 12;
-    p.hp = Math.min(p.hp + 12, p.maxHp);
-    p.baseAtk += 2;
+    p.expNext = Math.floor(p.expNext * LEVEL_UP_EXP_MULT);
+    p.maxHp += LEVEL_UP_HP_BONUS;
+    p.hp = Math.min(p.hp + LEVEL_UP_HP_BONUS, p.maxHp);
+    p.baseAtk += LEVEL_UP_ATK_BONUS;
     recalcStats();
-    log(`✨ レベルアップ！ Lv${p.lv}！ HP+12 ATK+2`, 'log-level');
+    log(`✨ レベルアップ！ Lv${p.lv}！ HP+${LEVEL_UP_HP_BONUS} ATK+${LEVEL_UP_ATK_BONUS}`, 'log-level');
   }
 }
 
@@ -1457,7 +1510,7 @@ function interact() {
   const p = G.player;
   const tile = G.map[p.y][p.x];
   if (tile === STAIRS) {
-    if (G.floor >= 10) {
+    if (G.floor >= MAX_FLOORS) {
       log('これ以上は進めない...', 'log-info');
     } else {
       loadFloor(G.floor + 1);
@@ -1619,7 +1672,7 @@ function startAutoWalk(path) {
       Math.abs(e.x - G.player.x) + Math.abs(e.y - G.player.y) <= 1
     );
     if (adjEnemy || !autoPath.length) stopAutoWalk();
-  }, 120);
+  }, AUTO_WALK_INTERVAL_MS);
 }
 
 function stopAutoWalk() {
@@ -1685,9 +1738,9 @@ canvas.addEventListener('touchend', e => {
   const dx = e.changedTouches[0].clientX - touchStart.clientX;
   const dy = e.changedTouches[0].clientY - touchStart.clientY;
   if (Math.abs(dx) > Math.abs(dy)) {
-    if (Math.abs(dx) > 20) tryMove(dx > 0 ? 1 : -1, 0);
+    if (Math.abs(dx) > SWIPE_THRESHOLD_PX) tryMove(dx > 0 ? 1 : -1, 0);
   } else {
-    if (Math.abs(dy) > 20) tryMove(0, dy > 0 ? 1 : -1);
+    if (Math.abs(dy) > SWIPE_THRESHOLD_PX) tryMove(0, dy > 0 ? 1 : -1);
   }
   touchStart = null;
   drawGame();

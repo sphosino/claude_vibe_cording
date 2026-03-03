@@ -122,6 +122,42 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
 // P2: 右→左 (forward = dr:0,  dc:-1)
 // =====================================================================
 
+
+// ===== AI & BALANCE CONSTANTS =====
+
+// --- AI timing (ms) ---
+const AI_KICK_DELAY_MS  = 300;   // ゲーム開始時の最初のAIキック遅延
+const AI_THINK_DELAY_MS = 400;   // AI手番の思考遅延
+const AI_SKIP_DELAY_MS  = 800;   // 人間の手なしスキップ時の遅延
+
+// --- AI探索深さ ---
+const AI_DEPTH_3P = 3;  // 3人生存時の探索深さ
+const AI_DEPTH_2P = 2;  // 2人生存時の探索深さ
+
+// --- AIスコア番兵 ---
+const SCORE_WIN       =  1800000;  // CPU勝利（王取り・入玉）
+const SCORE_WIN_FINAL =  2000000;  // 最後の生存者確定
+const SCORE_LOSE      = -1500000;  // 人間勝利（CPU視点での最悪値）
+
+// --- AI評価ウェイト（CPU連合 vs 人間モード）---
+const W_KING_PRESSURE   = 120;  // 人間の玉の逃げ場制限ペナルティ
+const W_PIECE_PROXIMITY =  18;  // CPUの駒が人間の玉に近いほど加点
+const W_ADVANCE         =  50;  // CPU玉の入玉進行ボーナス
+
+// --- AI評価ウェイト（CPU vs CPU モード）---
+const W_ESCAPE_SELF     =  80;  // 自玉の逃げ場（多いほど良い）
+const W_ESCAPE_ENEMY    =  80;  // 敵玉の逃げ場（少ないほど良い）
+const W_PROXIMITY_2P    =  15;  // CPU駒が敵玉に近いほど加点
+const W_ADVANCE_2P      =  50;  // CPU玉の入玉進行ボーナス
+
+// --- 持ち駒スコア割引率 ---
+const HAND_SCORE_RATE      = 0.9;  // pieceScore での手駒割引
+const HAND_SCORE_RATE_EVAL = 0.7;  // evalStatic での手駒割引
+
+// --- ルール定数 ---
+const KEEP_PIECE_DIFF    = 3;  // 持ち駒にできる最低駒数差
+const DROP_SEARCH_RADIUS = 5;  // AI打ち駒探索時の王からの最大距離（マンハッタン）
+
 const CS=56, BX=115, BY=115, CW=760, CH=760;
 const canvas=document.getElementById('c');
 const ctx=canvas.getContext('2d');
@@ -215,7 +251,7 @@ function init(){
   setStatus(pName(humanPlayer)+'の番です');
   render();
   // 人間がP0以外のとき、最初のAIターンをキック
-  if(humanPlayer!==0) setTimeout(()=>kickAI(),300);
+  if(humanPlayer!==0) setTimeout(()=>kickAI(),AI_KICK_DELAY_MS);
 }
 
 function setView(vp){ viewPlayer=vp; render(); }
@@ -228,7 +264,7 @@ function kickAI(){
     if(_g!==gameGen||gover) return;
     const mv=aiMove(turn,board,hand,eliminated);
     if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
-  },400);
+  },AI_THINK_DELAY_MS);
 }
 function setHumanPlayer(p){
   humanPlayer=p; ENEMY=p; viewPlayer=p;
@@ -285,7 +321,7 @@ function canKeep(attackerO, victimO, victimPiece){
   if (isBeyondCenter) return true;
 
   // 駒数差による判定
-  return (countPieces(victimO) - countPieces(attackerO) >= 3);
+  return (countPieces(victimO) - countPieces(attackerO) >= KEEP_PIECE_DIFF);
 }
 
 
@@ -517,7 +553,7 @@ function simApply(bd, hd, elim, mv, o){
         const diff =
           countPiecesOn(b,h,cap.o) - countPiecesOn(b,h,o);
 
-        if(diff >= 3){
+        if(diff >= KEEP_PIECE_DIFF){
           h[o].push(cap.p);
         }
       }
@@ -580,7 +616,7 @@ function pieceScore(b, h, o){
     let v=PV[cell.p]; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
     s+=v;
   }
-  h[o].forEach(p=>s+=PV[p]*0.9);
+  h[o].forEach(p=>s+=PV[p]*HAND_SCORE_RATE);
   return s;
 }
 
@@ -602,9 +638,9 @@ function evalStatic(b, h, elim){
     let score = pieceScore(b,h,c1) - pieceScore(b,h,c2);
 
     // c1の王の逃げ場は多い方がいい（自分が逃げやすい）
-    score -= (8 - kingEscapesOn(b,c1)) * 80;
+    score -= (8 - kingEscapesOn(b,c1)) * W_ESCAPE_SELF;
     // c2の王の逃げ場は少ない方がいい（相手を追い詰める）
-    score += (8 - kingEscapesOn(b,c2)) * 80;
+    score += (8 - kingEscapesOn(b,c2)) * W_ESCAPE_ENEMY;
 
     // c1の駒がc2の王に近いほど有利
     const [k2r,k2c] = findKingOn(b,c2);
@@ -612,7 +648,7 @@ function evalStatic(b, h, elim){
       for(let r=0;r<9;r++) for(let c=0;c<9;c++){
         const cell=b[r][c];
         if(cell?.o===c1&&cell?.p!=='OU'){
-          score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*15;
+          score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*W_PROXIMITY_2P;
         }
       }
     }
@@ -620,9 +656,9 @@ function evalStatic(b, h, elim){
     // 入玉距離
     const [ck1r,ck1c] = findKingOn(b,c1);
     if(ck1r>=0){
-      if(c1===1) score+=(ck1r-4)*50;
-      else if(c1===2) score+=(4-ck1c)*50;
-      else score+=(4-ck1r)*50;
+      if(c1===1) score+=(ck1r-4)*W_ADVANCE_2P;
+      else if(c1===2) score+=(4-ck1c)*W_ADVANCE_2P;
+      else score+=(4-ck1r)*W_ADVANCE_2P;
     }
     return score;
 
@@ -636,11 +672,11 @@ function evalStatic(b, h, elim){
       let v=PV[cell.p]; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
       if(cell.o===hu) score-=v; else if(!elim[cell.o]) score+=v;
     }
-    h[hu].forEach(p=>score-=PV[p]*0.7);
-    [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(o=>h[o].forEach(p=>score+=PV[p]*0.7));
+    h[hu].forEach(p=>score-=PV[p]*HAND_SCORE_RATE_EVAL);
+    [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(o=>h[o].forEach(p=>score+=PV[p]*HAND_SCORE_RATE_EVAL));
 
     const esc = kingEscapesOn(b, hu);
-    score += (8-esc) * 120;
+    score += (8-esc) * W_KING_PRESSURE;
 
     const [kr,kc] = findKingOn(b, hu);
     if(kr >= 0){
@@ -648,14 +684,14 @@ function evalStatic(b, h, elim){
         for(let r=0;r<9;r++) for(let c=0;c<9;c++){
           const cell=b[r][c];
           if(cell?.o===cpu&&cell?.p!=='OU'){
-            score += Math.max(0,(8-Math.abs(r-kr)-Math.abs(c-kc)))*18;
+            score += Math.max(0,(8-Math.abs(r-kr)-Math.abs(c-kc)))*W_PIECE_PROXIMITY;
           }
         }
         const [ckr,ckc] = findKingOn(b, cpu);
         if(ckr>=0){
-          if(cpu===1) score+=(ckr-4)*50;
-          else if(cpu===2) score+=(4-ckc)*50;
-          else score+=(4-ckr)*50;
+          if(cpu===1) score+=(ckr-4)*W_ADVANCE;
+          else if(cpu===2) score+=(4-ckc)*W_ADVANCE;
+          else score+=(4-ckr)*W_ADVANCE;
         }
       });
     }
@@ -705,7 +741,7 @@ function allMovesOn(bd,hd,o,elim){
       // 探索中は王から5マス以内のみ（盤上の手生成は制限しない）
       if(ekr>=0){
         const dist=Math.abs(r-ekr)+Math.abs(c-ekc);
-        if(dist>5) continue;
+        if(dist>DROP_SEARCH_RADIUS) continue;
       }
       res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
     }
@@ -767,7 +803,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     let best = Infinity;
     for(const mv of moves){
       const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-      if(tryWin) return -1500000;
+      if(tryWin) return SCORE_LOSE;
       const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt, 0);
       best = Math.min(best, score);
       beta = Math.min(beta, score);
@@ -779,12 +815,12 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     
     for(const mv of moves){
         const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-        if(tryWin) return 1800000;
+        if(tryWin) return SCORE_WIN;
         const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
         if(cap && cap.p === 'OU'){
         const newElim = elim.slice(); newElim[cap.o] = true;
         const newAlive = newElim.filter(e=>!e).length;
-        if(newAlive <= 1) return 2000000;
+        if(newAlive <= 1) return SCORE_WIN_FINAL;
         const nxt2 = nextAliveOn(newElim, turnPlayer);
         const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, 0);
         best = Math.max(best, score);
@@ -847,7 +883,7 @@ function aiMove(o,bd,hd,elim){
     const {b:nb,h:nh}=simApply(bd,hd,elim,mv,o);
     const nxt = nextAliveOn(elim, o);
     const aliveNow = eliminated.filter(e=>!e).length;
-    const searchDepth = aliveNow <= 2 ? 2 : 3;
+    const searchDepth = aliveNow <= 2 ? AI_DEPTH_2P : AI_DEPTH_3P;
     const v = minimaxRound(nb, nh, eliminated.slice(), searchDepth, -Infinity, Infinity, nxt);
     if(v>bestScore){bestScore=v;best=mv;}
   }
@@ -876,7 +912,7 @@ function nextTurn(bd) {
       setTimeout(() => {
         if (_sg !== gameGen || gover) return;
         nextTurn(bd);
-      }, 800);
+      }, AI_SKIP_DELAY_MS);
     } else {
       setStatus(PNAME[humanPlayer] + 'の番です');
     }
