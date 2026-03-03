@@ -1208,7 +1208,7 @@ function drawAllHands(){
   } else if(viewPlayer===1){
     drawHandRow(0,'top'); drawHandRow(2,'left');
   } else {
-    drawHandRow(0,'top'); drawHandRow(1,'right');
+    drawHandRow(0,'left'); drawHandRow(1,'right');
   }
 }
 
@@ -1223,9 +1223,19 @@ function drawPlayerLabels(){
     ctx.font='11px monospace';
     ctx.fillText(sub,x,y+16);
   }
-  drawLabel(PNAME[0]+(eliminated[0]?' ☠':''),`駒数: ${counts[0]}`,12,CH-30,PCOL[0],'left');
-  drawLabel(PNAME[1]+(eliminated[1]?' ☠':''),`駒数: ${counts[1]}`,12,22,PCOL[1],'left');
-  drawLabel(PNAME[2]+(eliminated[2]?' ☠':''),`駒数: ${counts[2]}`,CW-12,CH-30,PCOL[2],'right');
+  // ラベル位置を視点に合わせて動的に決定
+  // viewPlayer===0: P0=左下, P1=左上, P2=右下
+  // viewPlayer===1: P1=左下, P0=左上, P2=右下
+  // viewPlayer===2: P2=左下, P0=左中, P1=右上
+  const labelPos = {
+    0: viewPlayer===0 ? [12,CH-30,'left'] : viewPlayer===1 ? [12,22,'left']   : [12,CH/2,'left'],
+    1: viewPlayer===0 ? [12,22,'left']    : viewPlayer===1 ? [12,CH-30,'left'] : [CW-12,22,'right'],
+    2: viewPlayer===0 ? [CW-12,CH-30,'right'] : viewPlayer===1 ? [CW-12,CH-30,'right'] : [12,CH-30,'left'],
+  };
+  [0,1,2].forEach(o=>{
+    const [x,y,align]=labelPos[o];
+    drawLabel(PNAME[o]+(eliminated[o]?' ☠':''),`駒数: ${counts[o]}`,x,y,PCOL[o],align);
+  });
   // 直前の手を符号で表示
   if(lastMove&&lastMove.fugo){
     const col=PCOL[lastMove.o];
