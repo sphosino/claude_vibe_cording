@@ -578,7 +578,7 @@ function pieceScore(b, h, o){
     let v=PV[cell.p]; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
     s+=v;
   }
-  h[o].forEach(p=>s+=PV[p]*0.7);
+  h[o].forEach(p=>s+=PV[p]*0.4);
   return s;
 }
 
