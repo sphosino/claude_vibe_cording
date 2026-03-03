@@ -108,9 +108,9 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
     <canvas id="c"></canvas>
     <div id="btnRow">
       <button onclick="init()">盤面を初期化</button>
-      <button id="hb0" onclick="setHumanPlayer(0)" style="background:#6a3500">🔵 青を操作</button>
-      <button id="hb1" onclick="setHumanPlayer(1)">🔴 赤を操作</button>
-      <button id="hb2" onclick="setHumanPlayer(2)">🟢 緑を操作</button>
+      <button id="hb0" onclick="setHumanPlayer(0)" style="background:#6a3500">🔵 青将で対局</button>
+      <button id="hb1" onclick="setHumanPlayer(1)">🔴 赤将で対局</button>
+      <button id="hb2" onclick="setHumanPlayer(2)">🟢 緑将で対局</button>
       <button onclick="setView(viewPlayer===2?0:viewPlayer+1)">👁 視点切替</button>
     </div>
   </div>
@@ -132,8 +132,8 @@ const PVP ={FU:200,GIN:50,KAKU:500,HI:450};
 const PC  ={FU:'歩',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
 const PCP ={FU:'と',GIN:'全',KAKU:'馬',HI:'龍'};
 const PCOL=['#4488ff','#ff4433','#33cc55'];
-const PNAME_BASE=['先手','CPU①','CPU②'];
-const PNAME=PNAME_BASE; // humanPlayerに応じて動的更新
+const PNAME_BASE=['青将','赤将','緑将'];
+const PNAME=PNAME_BASE.slice(); // humanPlayerに応じて動的更新
 const DRAW_ANGLE=[0, Math.PI, -Math.PI/2]; // piece facing direction per owner
 
 let board, hand, turn, gover, winner;
@@ -230,8 +230,8 @@ function kickAI(){
 }
 function setHumanPlayer(p){
   humanPlayer=p; ENEMY=p; viewPlayer=p;
+  [0,1,2].forEach(i=>PNAME[i]=PNAME_BASE[i]); // 毎回クリーンにリセット
   PNAME[p]=PNAME_BASE[p]+'(あなた)';
-  [0,1,2].filter(i=>i!==p).forEach(i=>PNAME[i]=PNAME_BASE[i]);
   // ボタンのハイライト更新
   [0,1,2].forEach(i=>{
     const btn=document.getElementById('hb'+i);
@@ -680,9 +680,13 @@ function allMovesOn(bd,hd,o,elim){
   // 持ち駒（AI探索時は王周辺に絞って探索爆発を防ぐ）
   const seen=new Set();
   // 敵の王位置を取得（打ち駒は王周辺優先）
-  let ekr=-1,ekc=-1
+  let ekr=-1,ekc=-1;
   if(!humanEliminated){
     [ekr,ekc] = findKingOn(bd, humanPlayer);
+  } else {
+    // CPU対CPU: 相手の王を狙う
+    const opponent = [0,1,2].find(p=>p!==o&&!elim[p]);
+    if(opponent!==undefined) [ekr,ekc] = findKingOn(bd, opponent);
   }
   hd[o].forEach(piece=>{
     if(seen.has(piece)) return; seen.add(piece);
