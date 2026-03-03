@@ -127,10 +127,10 @@ const canvas=document.getElementById('c');
 const ctx=canvas.getContext('2d');
 canvas.width=CW; canvas.height=CH;
 
-const PV  ={FU:100,GIN:400,KIN:500,KAKU:800,HI:900,OU:99999};
-const PVP ={FU:200,GIN:50,KAKU:500,HI:450};
-const PC  ={FU:'歩',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
-const PCP ={FU:'と',GIN:'全',KAKU:'馬',HI:'龍'};
+const PV  ={FU:100,KYO:300,KEI:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:99999};
+const PVP ={FU:200,KYO:200,KEI:150,GIN:50,KAKU:500,HI:450};
+const PC  ={FU:'歩',KYO:'香',KEI:'桂',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
+const PCP ={FU:'と',KYO:'杏',KEI:'今',GIN:'全',KAKU:'馬',HI:'龍'};
 const PCOL=['#4488ff','#ff4433','#33cc55'];
 const PNAME_BASE=['青将','赤将','緑将'];
 const PNAME=PNAME_BASE.slice(); // humanPlayerに応じて動的更新
@@ -314,13 +314,16 @@ function rawMoves(bd,r,c){
   };
 
   // 成り駒（金将動き）
-  if(pr&&['FU','GIN'].includes(p)){
+  if(pr&&['FU','KYO','KEI','GIN'].includes(p)){
     [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,0]].forEach(([dr,dc])=>step(dr,dc));
     return res;
   }
 
   switch(p){
     case 'FU': step(-1,0); break;
+    case 'KYO': slide(-1,0); break;  // 前方への飛び駒（香車）
+    case 'KEI':                       // 桂馬：前方2+左右1の跳び
+      [[-2,-1],[-2,1]].forEach(([dr,dc])=>step(dr,dc)); break;
     case 'GIN':
       [[-1,-1],[-1,0],[-1,1],[1,-1],[1,1]].forEach(([dr,dc])=>step(dr,dc)); break;
     case 'KIN':
@@ -346,10 +349,15 @@ function inPromoZone(o,r,c){
 }
 
 function mustPromote(p,o,tr,tc){
-  if(p==='FU'){
+  if(p==='FU'||p==='KYO'){
     if(o===0) return tr===0;
     if(o===1) return tr===8;
     return tc===0;
+  }
+  if(p==='KEI'){
+    if(o===0) return tr<=1;
+    if(o===1) return tr>=7;
+    return tc<=1;
   }
   return false;
 }
@@ -363,7 +371,7 @@ function allMoves(o,bd){
     const cell=bd[r][c];
     if(!cell||cell.o!==o) continue;
     rawMoves(bd,r,c).forEach(([tr,tc])=>{
-      const canPro=!cell.pr&&['FU','GIN','KAKU','HI'].includes(cell.p);
+      const canPro=!cell.pr&&['FU','KYO','KEI','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
       const must=mustPromote(cell.p,o,tr,tc);
       const base={fr:r,fc:c,tr,tc,drop:false};
@@ -677,7 +685,7 @@ function allMovesOn(bd,hd,o,elim){
     const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
     const dests=rawMoves(bd,r,c);
     dests.forEach(([tr,tc])=>{
-      const canPro=!cell.pr&&['FU','GIN','KAKU','HI'].includes(cell.p);
+      const canPro=!cell.pr&&['FU','KYO','KEI','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
       const must=mustPromote(cell.p,o,tr,tc);
       const base={fr:r,fc:c,tr,tc,drop:false};
