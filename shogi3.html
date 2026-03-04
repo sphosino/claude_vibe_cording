@@ -1028,7 +1028,7 @@ function xyToHand0(x,y){
   const uh=uniqueHand(humanPlayer);if(!uh.length) return -1;
   const handY=BY+9*CS+14;
   if(y<handY||y>handY+CS) return -1;
-  const sp=Math.min(54,480/Math.max(uh.length,1));
+  const sp=Math.min(66,500/Math.max(uh.length,1));
   const startX=(CW-uh.length*sp)/2;
   for(let i=0;i<uh.length;i++)
     if(x>=startX+i*sp&&x<startX+(i+1)*sp) return i;
@@ -1123,7 +1123,7 @@ function drawPentagon(cx,cy,w,h){
 }
 
 function drawPieceAt(cx,cy,cell,small=false){
-  const w=small?28:42,h=small?32:48;
+  const w=small?38:42,h=small?44:48;
   const {p,o,pr}=cell;
   const angle=DRAW_ANGLE[o]+VIEW_ROT[viewPlayer];
   const ch=pr?(PCP[p]||PC[p]):PC[p];
@@ -1143,7 +1143,7 @@ function drawPieceAt(cx,cy,cell,small=false){
   ctx.strokeStyle=PCOL[o];ctx.lineWidth=2;ctx.stroke();
 
   ctx.fillStyle=pr?'#cc2000':'#1a0800';
-  ctx.font=`bold ${small?12:17}px 'Hiragino Mincho Pro','Yu Mincho',serif`;
+  ctx.font=`bold ${small?16:17}px 'Hiragino Mincho Pro','Yu Mincho',serif`;
   ctx.textAlign='center';ctx.textBaseline='middle';
   ctx.fillText(ch,0,1);
   ctx.restore();
@@ -1224,36 +1224,36 @@ function drawHandRow(o, side){
   const startX=(CW-uh.length*sp)/2;
   const col=PCOL[o];
 
-  ctx.font='9px serif'; ctx.fillStyle=col+'aa'; ctx.textAlign='center';
+  ctx.font='bold 13px serif'; ctx.fillStyle=col+'cc'; ctx.textAlign='center';
   if(side==='bottom'){
-    ctx.fillText('持ち駒',CW/2,BY+9*CS+10);
+    ctx.fillText('持ち駒',CW/2,BY+9*CS+14);
     uh.forEach(({p,n},i)=>{
-      const cx=startX+i*sp+sp/2, cy=BY+9*CS+40;
+      const cx=startX+i*sp+sp/2, cy=BY+9*CS+50;
       const isSel=selHand&&o===0&&selected===i;
       if(isSel){ctx.fillStyle='rgba(255,255,80,0.25)';ctx.fillRect(cx-25,cy-26,50,50);}
       drawPieceAt(cx,cy,{p,o,pr:false},true);
-      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 13px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
     });
   } else if(side==='top'){
     ctx.fillText('持ち駒',CW/2,15);
     uh.forEach(({p,n},i)=>{
-      const cx=startX+i*sp+sp/2, cy=38;
+      const cx=startX+i*sp+sp/2, cy=48;
       drawPieceAt(cx,cy,{p,o,pr:false},true);
-      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 13px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+18,cy+18);}
     });
   } else if(side==='right'){
     ctx.textAlign='right'; ctx.fillText('持',CW-8,BY+CS*1.5);
     uh.forEach(({p,n},i)=>{
       const cx=CW-52, cy=BY+CS*2+i*50+25;
       drawPieceAt(cx,cy,{p,o,pr:false},true);
-      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 13px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
     });
   } else { // left
     ctx.textAlign='left'; ctx.fillText('持',12,BY+CS*1.5);
     uh.forEach(({p,n},i)=>{
       const cx=50, cy=BY+CS*2+i*50+25;
       drawPieceAt(cx,cy,{p,o,pr:false},true);
-      if(n>1){ctx.fillStyle=col;ctx.font='bold 10px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
+      if(n>1){ctx.fillStyle=col;ctx.font='bold 13px monospace';ctx.textAlign='center';ctx.fillText('×'+n,cx+15,cy+18);}
     });
   }
 }
@@ -1278,11 +1278,11 @@ function drawPlayerLabels(){
   function drawLabel(text,sub,x,y,col,align){
     ctx.textAlign=align;
     ctx.fillStyle=col;
-    ctx.font='bold 13px sans-serif';
+    ctx.font='bold 16px sans-serif';
     ctx.fillText(text,x,y);
     ctx.fillStyle=col+'aa';
-    ctx.font='11px monospace';
-    ctx.fillText(sub,x,y+16);
+    ctx.font='13px monospace';
+    ctx.fillText(sub,x,y+19);
   }
   drawLabel(PNAME[0]+(eliminated[0]?' ☠':''),`駒数: ${counts[0]}`,12,CH-30,PCOL[0],'left');
   drawLabel(PNAME[1]+(eliminated[1]?' ☠':''),`駒数: ${counts[1]}`,12,22,PCOL[1],'left');
