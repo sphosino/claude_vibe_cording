@@ -898,17 +898,14 @@ function aiMove(o,bd,hd,elim){
 
   let best=moves[0], bestScore=-Infinity;
   for(const mv of moves){
-    // 即勝ち手はすぐ返す
+    // 即勝ち手（入玉のみ即返し、王取りは評価関数に任せる）
     if(!mv.drop){
-      const cap=board[mv.tr]?.[mv.tc];
-      if(cap?.p==='OU') return mv;
       const cell=board[mv.fr]?.[mv.fc];
       if(cell?.p==='OU'){
         if(o===1&&mv.tr===8) return mv;
         if(o===2&&mv.tc===0) return mv;
         if(o===0&&mv.tr===0) return mv;
       }
-
     }
 
 
