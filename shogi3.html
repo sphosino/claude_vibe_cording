@@ -807,23 +807,13 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     // 手なし: 次のプレイヤーへ（深さ消費なし、スキップ数+1）
     return minimaxRound(bd, hd, elim, depth, alpha, beta, nxt, skips+1);
   }
-  //枝刈り開始
-  sortMoves(moves,bd);
-  // 取り手は必ず残す、残りは上位で絞る
+  // 取り手を駒価値でソート → 全部残す
+  // 非取り手は上位12手に絞る
   const capMoves = moves.filter(m=>!m.drop && bd[m.tr]?.[m.tc]);
-  const nonCap = moves.filter(m=>!(!m.drop && bd[m.tr]?.[m.tc]));
-  let limit = Math.min(16, Math.ceil(nonCap.length*0.5));
-  const trimmed = nonCap.slice(0, limit);
-  moves = [...capMoves, ...trimmed];
-  // static評価で並び替え
-  moves.sort((a,b)=>{
-    const {b:ba,h:ha,elim:ea}=simApply(bd,hd,elim,a,turnPlayer);
-    const {b:bb,h:hb,elim:eb}=simApply(bd,hd,elim,b,turnPlayer);
-    return evalStatic(bb,hb,eb) - evalStatic(ba,ha,ea);
-  });
-  // 取り手は全部残しつつ上位8手
-  const capCount = capMoves.length;
-  moves = moves.slice(0, Math.max(8, capCount));
+  const nonCap   = moves.filter(m=> m.drop || !bd[m.tr]?.[m.tc]);
+  sortMoves(capMoves, bd); // 取り手: 駒価値順
+  sortMoves(nonCap,   bd); // 非取り手: ソート後に絞る
+  moves = [...capMoves, ...nonCap.slice(0, 12)];
 
 
   //各候補手に再帰
