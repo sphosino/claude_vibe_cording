@@ -76,6 +76,41 @@
     transform: scale(1.05);
   }
 
+  #diff-select {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 1.8em;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .diff-btn {
+    font-family: 'VT323', monospace;
+    font-size: 1.3em;
+    background: rgba(255,255,255,0.04);
+    border: 2px solid #2a2a45;
+    color: #6060a0;
+    padding: 10px 18px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s;
+    text-align: center;
+    min-width: 120px;
+  }
+  .diff-btn:hover { background: rgba(255,255,255,0.08); transform: translateY(-2px); }
+  .diff-btn.selected {
+    border-width: 2px;
+    color: #fff;
+    background: rgba(255,255,255,0.1);
+  }
+  .diff-btn .diff-desc {
+    display: block;
+    font-size: 0.72em;
+    color: #6060a0;
+    margin-top: 2px;
+    letter-spacing: 0;
+  }
+  .diff-btn.selected .diff-desc { color: #b0b0d0; }
+
   #game-screen {
     display: none;
     width: 100vw;
@@ -269,11 +304,18 @@
 <div id="title-screen">
   <h1>⚔️ DUNGEON<br>OF DOOM ⚔️</h1>
   <p class="subtitle">〜 地下最深部の魔王を倒せ！ 〜</p>
-  <p style="font-size:1.4em; color:#6060a0; margin-bottom: 1.5em;">
+  <p style="font-size:1.4em; color:#6060a0; margin-bottom: 1.2em;">
     WASD / 矢印キー で移動<br>
     アイテムを拾って強くなれ！<br>
     全10フロアを制覇せよ！
   </p>
+  <p style="font-family:'Press Start 2P',monospace; font-size:0.7em; color:#ffd700; margin-bottom:0.8em; letter-spacing:1px;">DIFFICULTY &nbsp;<span style="color:#6060a0; font-size:0.8em">← → で選択 &nbsp; X でスタート</span></p>
+  <div id="diff-select">
+    <button class="diff-btn" id="dbtn-easy"   onclick="selectDiff('easy')"  >🌿 かんたん<span class="diff-desc">初めての方向け。HP多め、敵弱め。</span></button>
+    <button class="diff-btn selected" id="dbtn-normal" onclick="selectDiff('normal')" style="box-shadow:0 0 16px 3px #ffd700; border-color:#ffd700">⚔️ ふつう<span class="diff-desc">標準的な難易度。</span></button>
+    <button class="diff-btn" id="dbtn-hard"   onclick="selectDiff('hard')"  >🔥 むずかしい<span class="diff-desc">手ごわい敵と短い瘴気猶予。</span></button>
+    <button class="diff-btn" id="dbtn-hell"   onclick="selectDiff('hell')"  >☠️ 地獄<span class="diff-desc">回復なし。クリアできれば本物。</span></button>
+  </div>
   <button class="start-btn" onclick="startGame()">▶ START</button>
 </div>
 
@@ -333,7 +375,7 @@
   </div>
 
   <div id="log-box"></div>
-  <div id="controls">← → ↑ ↓ / WASD: 移動 &nbsp;|&nbsp; [I]: インベントリ &nbsp;|&nbsp; [Enter/Space]: 調べる</div>
+  <div id="controls">← → ↑ ↓ / WASD: 移動 &nbsp;|&nbsp; [Z]: インベントリ &nbsp;|&nbsp; [X / Enter / Space]: 調べる</div>
 </div>
 
 <div id="overlay">
@@ -421,20 +463,66 @@ const LOG_MAX_LINES         = 30;    // max entries in battle log
 const TIP_CYCLE_MS          = 10000; // ms between tip rotations
 const SWIPE_THRESHOLD_PX    = 20;    // min swipe distance (pixels)
 
+// ===== DIFFICULTY =====
+const DIFF = {
+  easy: {
+    label: '🌿 かんたん', color: '#00ff88',
+    initHp: 65, initAtk: 8, initDef: 2,
+    regenInterval: 5,
+    enemyScale: 0.12,
+    miasmaMax: 140, miasmaMin: 60,
+    bossHp: 500, bossAtk: 20, bossDef: 10,
+    hungerDrain: 0.6,
+    desc: '初めての方向け。HP多め、敵弱め。',
+  },
+  normal: {
+    label: '⚔️ ふつう', color: '#ffd700',
+    initHp: 45, initAtk: 6, initDef: 1,
+    regenInterval: 8,
+    enemyScale: 0.18,
+    miasmaMax: 100, miasmaMin: 40,
+    bossHp: 700, bossAtk: 28, bossDef: 14,
+    hungerDrain: 1.0,
+    desc: '標準的な難易度。',
+  },
+  hard: {
+    label: '🔥 むずかしい', color: '#ff8800',
+    initHp: 30, initAtk: 5, initDef: 0,
+    regenInterval: 12,
+    enemyScale: 0.26,
+    miasmaMax: 70, miasmaMin: 25,
+    bossHp: 900, bossAtk: 36, bossDef: 18,
+    hungerDrain: 1.5,
+    desc: '手ごわい敵と短い瘴気猶予。',
+  },
+  hell: {
+    label: '☠️ 地獄', color: '#ff3040',
+    initHp: 20, initAtk: 4, initDef: 0,
+    regenInterval: 99,
+    enemyScale: 0.35,
+    miasmaMax: 50, miasmaMin: 18,
+    bossHp: 1200, bossAtk: 45, bossDef: 22,
+    hungerDrain: 2.0,
+    desc: '回復なし。クリアできれば本物。',
+  },
+};
+let currentDiff = 'normal';
+
 // ===== STATE =====
 let G = {}; // game state
 
 function initState() {
+  const d = DIFF[currentDiff];
   return {
     floor: 1,
     player: {
       x: 1, y: 1,
-      hp: PLAYER_INIT_HP, maxHp: PLAYER_INIT_HP,
-      baseAtk: PLAYER_INIT_ATK, baseDef: PLAYER_INIT_DEF,  // ベース値（永続強化で増える）
-      atk: PLAYER_INIT_ATK, def: PLAYER_INIT_DEF,           // 実効値（満腹度で変動）
+      hp: d.initHp, maxHp: d.initHp,
+      baseAtk: d.initAtk, baseDef: d.initDef,
+      atk: d.initAtk, def: d.initDef,
       lv: 1, exp: 0, expNext: PLAYER_INIT_EXP_NEXT,
       gold: 0,
-      hunger: PLAYER_INIT_HUNGER,          // 満腹度 0〜100
+      hunger: PLAYER_INIT_HUNGER,
       inv: [{ type: 'potion', name: 'ポーション', heal: 20, col: '#00ff88', icon: '🧪' },
             { type: 'food', name: '食料', col: '#ffaa44', icon: '🍖' }],
       weapon: null, armor: null,
@@ -442,8 +530,8 @@ function initState() {
     map: [], enemies: [], items: [],
     explored: [],
     turn: 0,
-    miasmaMax: MIASMA_START_MAX,
-    miasmaLeft: MIASMA_START_MAX,
+    miasmaMax: d.miasmaMax,
+    miasmaLeft: d.miasmaMax,
     miasmaOver: 0,
     animQueue: [],
     msg: [],
@@ -581,24 +669,25 @@ function createEnemy(x, y, floor, isBoss) {
   ];
   
   if (isBoss) {
+    const d = DIFF[currentDiff];
     return {
       x, y, isBoss: true,
       name: '🔥魔王ドゥーム', glyph: 'B', col: '#ff44ff',
-      maxHp: BOSS_HP, hp: BOSS_HP,
-      atk: BOSS_ATK, def: BOSS_DEF,
+      maxHp: d.bossHp, hp: d.bossHp,
+      atk: d.bossAtk, def: d.bossDef,
       exp: BOSS_EXP, gold: BOSS_GOLD,
       sight: 10, chaseLimit: 999, moveChance: 1.0, style: 'chase',
       aiState: 'idle', chaseCounter: 0, lastKnown: null,
       spawnX: x, spawnY: y, patrolDir: [1,0], patrolTimer: 0,
-      phase2: false,       // goes berserk at 50% HP
-      specialCooldown: 0,  // special attack every 3 turns
+      phase2: false,
+      specialCooldown: 0,
     };
   }
   
   const tidx = Math.min(Math.floor(floor / 2), types.length - 1);
   const spread = Math.floor(Math.random() * Math.min(2, types.length - tidx));
   const t = types[Math.min(tidx + spread, types.length - 1)];
-  const scale = 1 + (floor - 1) * ENEMY_SCALE_PER_FLOOR;
+  const scale = 1 + (floor - 1) * DIFF[currentDiff].enemyScale;
   
   return {
     x, y, isBoss: false,
@@ -986,6 +1075,18 @@ function cycleTip() {
   tipIdx++;
 }
 
+function selectDiff(key) {
+  currentDiff = key;
+  ['easy','normal','hard','hell'].forEach(k => {
+    const btn = document.getElementById('dbtn-' + k);
+    const col = DIFF[k].color;
+    const isSelected = k === key;
+    btn.classList.toggle('selected', isSelected);
+    btn.style.boxShadow = isSelected ? `0 0 16px 3px ${col}` : '';
+    btn.style.borderColor = isSelected ? col : '';
+  });
+}
+
 // ===== GAME LOGIC =====
 function startGame() {
   G = initState();
@@ -993,13 +1094,15 @@ function startGame() {
   document.getElementById('game-screen').style.display = 'flex';
   document.getElementById('overlay').style.display = 'none';
   document.getElementById('log-box').innerHTML = '';
-  
+
   loadFloor(1);
-  log('⚔️ ダンジョンに入った！魔王を討て！', 'log-info');
-  
+  const d = DIFF[currentDiff];
+  log(`⚔️ ダンジョンに入った！魔王を討て！`, 'log-info');
+  log(`難易度: ${d.label}`, 'log-info');
+
   cycleTip();
   setInterval(cycleTip, TIP_CYCLE_MS);
-  
+
   requestAnimationFrame(loop);
 }
 
@@ -1014,8 +1117,9 @@ function loadFloor(floor) {
   G.player.y = data.py;
   G.turn = 0;
 
-  // 1F=100ターン → 10F=40ターン の直線
-  G.miasmaMax = Math.max(MIASMA_START_MIN, Math.round(MIASMA_START_MAX - (floor - 1) * (MIASMA_START_MAX - MIASMA_START_MIN) / (MAX_FLOORS - 1)));
+  // 難易度に応じた瘴気上限（深階ほど短くなる）
+  const d = DIFF[currentDiff];
+  G.miasmaMax = Math.max(d.miasmaMin, Math.round(d.miasmaMax - (floor - 1) * (d.miasmaMax - d.miasmaMin) / (MAX_FLOORS - 1)));
   G.miasmaLeft = G.miasmaMax;
   G.miasmaOver = 0;
 
@@ -1081,9 +1185,9 @@ function tryMove(dx, dy) {
   updateExplored();
   enemyTurn();
 
-  // Passive regen: +1 HP every 5 turns
+  // Passive regen: 難易度に応じたターン数ごとに+1 HP
   G.turn = (G.turn || 0) + 1;
-  if (G.turn % REGEN_INTERVAL === 0 && G.player.hp < G.player.maxHp) {
+  if (G.turn % DIFF[currentDiff].regenInterval === 0 && G.player.hp < G.player.maxHp) {
     G.player.hp = Math.min(G.player.maxHp, G.player.hp + 1);
   }
 
@@ -1445,10 +1549,10 @@ function recalcStats() {
 function tickHunger() {
   const p = G.player;
   const prevStage = hungerStage(p.hunger);
-  // 満腹なほど速く減る、空腹なほどゆっくり
-  // 過食:1ターン, 満腹:2ターン, 普通:3ターン, 空腹:5ターン, 飢餓:8ターン
+  // 満腹なほど速く減る、空腹なほどゆっくり（難易度で全体倍率）
   const drainInterval = { stuffed: 1, full: 2, normal: 3, hungry: 5, starving: 8 };
-  const interval = drainInterval[hungerStage(p.hunger)];
+  const basInterval = drainInterval[hungerStage(p.hunger)];
+  const interval = Math.max(1, Math.round(basInterval / DIFF[currentDiff].hungerDrain));
   if (G.turn % interval === 0) p.hunger = Math.max(0, p.hunger - 1);
   const newStage = hungerStage(p.hunger);
 
@@ -1588,6 +1692,43 @@ function invUse() {
   exitInvMode();
   useItemAtIndex(idx);
 }
+// ===== TITLE / OVERLAY KEY NAVIGATION =====
+const DIFF_ORDER = ['easy', 'normal', 'hard', 'hell'];
+
+document.addEventListener('keydown', e => {
+  // タイトル画面
+  const titleVisible = document.getElementById('title-screen').style.display !== 'none'
+    && document.getElementById('title-screen').style.display !== '';
+  // style.display が空文字＝デフォルト表示中もあるので block 判定を兼ねて
+  const titleEl = document.getElementById('title-screen');
+  const isTitle = titleEl && (titleEl.style.display === '' || titleEl.style.display === 'block' || titleEl.style.display === 'flex');
+  if (isTitle && !G.player) {
+    const key = e.key;
+    const idx = DIFF_ORDER.indexOf(currentDiff);
+    if (key === 'ArrowLeft' || key === 'ArrowUp') {
+      e.preventDefault();
+      selectDiff(DIFF_ORDER[Math.max(0, idx - 1)]);
+    } else if (key === 'ArrowRight' || key === 'ArrowDown') {
+      e.preventDefault();
+      selectDiff(DIFF_ORDER[Math.min(DIFF_ORDER.length - 1, idx + 1)]);
+    } else if (key === 'x' || key === 'X' || key === 'Enter' || key === ' ') {
+      e.preventDefault();
+      startGame();
+    }
+    return;
+  }
+
+  // ゲームオーバー / クリア画面
+  const overlay = document.getElementById('overlay');
+  if (overlay && overlay.style.display === 'flex') {
+    if (e.key === 'x' || e.key === 'X' || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      startGame();
+    }
+    return;
+  }
+});
+
 document.addEventListener('keydown', e => {
   if (!G.player) return;
   const key = e.key;
@@ -1597,8 +1738,8 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     if (key === 'ArrowUp' || key === 'w' || key === 'W') invUp();
     else if (key === 'ArrowDown' || key === 's' || key === 'S') invDown();
-    else if (key === 'Enter' || key === ' ') invUse();
-    else if (key === 'Escape' || key === 'i' || key === 'I') exitInvMode();
+    else if (key === 'Enter' || key === ' ' || key === 'x' || key === 'X') invUse();
+    else if (key === 'Escape' || key === 'z' || key === 'Z') exitInvMode();
     return;
   }
 
@@ -1608,8 +1749,8 @@ document.addEventListener('keydown', e => {
   else if (key === 'ArrowDown' || key === 's' || key === 'S') { e.preventDefault(); tryMove(0, 1); }
   else if (key === 'ArrowLeft' || key === 'a' || key === 'A') { e.preventDefault(); tryMove(-1, 0); }
   else if (key === 'ArrowRight' || key === 'd' || key === 'D') { e.preventDefault(); tryMove(1, 0); }
-  else if (key === 'Enter' || key === ' ') { e.preventDefault(); interact(); }
-  else if (key === 'i' || key === 'I') { e.preventDefault(); enterInvMode(); }
+  else if (key === 'Enter' || key === ' ' || key === 'x' || key === 'X') { e.preventDefault(); interact(); }
+  else if (key === 'z' || key === 'Z') { e.preventDefault(); enterInvMode(); }
 
   drawGame();
   updateUI();
