@@ -117,6 +117,32 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
   body { flex-direction: column; }
   #rules { width: 100%; max-width: 760px; order: 2; box-sizing: border-box; }
 }
+
+/* 難易度UIバー */
+#diffRow {
+  margin-top: 8px;
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  background: rgba(20,8,0,0.55);
+  border: 1px solid #503010;
+  border-radius: 6px;
+  padding: 8px 14px;
+}
+#diffRow button {
+  padding: 5px 11px;
+  font-size: 13px;
+  background: #2a1200;
+  color: #c0a060;
+  border: 1px solid #804010;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: 0.15s;
+  letter-spacing: 0.5px;
+}
+#diffRow button:hover { background: #4a2500; color: #ffe090; }
 </style>
 </head>
 <body>
@@ -133,7 +159,7 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
       <li>脱落したプレイヤーの駒を取ったとき</li>
     </ul>
 
-    <div class="warning">
+    <div class="warning" id="collusion-warning">
       ⚠️ <span style="color:#ff4433">CPU①</span>・<span style="color:#33bb55">CPU②</span>は共闘してあなたを狙ってきます。
     </div>
   </div>
@@ -148,6 +174,19 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
       <button id="hb1" onclick="setHumanPlayer(1)">🔴 赤将で対局</button>
       <button id="hb2" onclick="setHumanPlayer(2)">🟢 緑将で対局</button>
       <button onclick="setView(viewPlayer===2?0:viewPlayer+1)">👁 視点切替</button>
+    </div>
+    <div id="diffRow">
+      <span id="diff-label" style="color:#ffaa44;font-size:13px;letter-spacing:1px;">⚔️ 難易度: 中級</span>
+      <button id="diff-beginner" onclick="setDifficulty('beginner')">🌱 入門</button>
+      <button id="diff-easy"     onclick="setDifficulty('easy')">🌿 初級</button>
+      <button id="diff-normal"   onclick="setDifficulty('normal')">⚔️ 中級</button>
+      <button id="diff-hard"     onclick="setDifficulty('hard')">🔥 上級</button>
+      <span style="color:#604020;margin:0 4px;">│</span>
+      <span style="display:inline-flex;align-items:center;gap:5px;flex-wrap:nowrap;">
+        <span id="col-label" style="color:#ffaa44;font-size:13px;letter-spacing:1px;">🤝 共闘: ON</span>
+        <button id="col-on"  onclick="setCpuCollusion(true)">🤝 共闘</button>
+        <button id="col-off" onclick="setCpuCollusion(false)">⚔ 三つ巴</button>
+      </span>
     </div>
     <div id="kifu-panel">
       <div id="kifu-header">📜 棋譜</div>
@@ -168,14 +207,23 @@ let canvas, ctx;
 
 // ── AI チューニング定数 ──
 const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-const AI_SEARCH_DEPTH    = IS_MOBILE ? 3 : 4;  // 深さ
-const AI_MOVE_CANDIDATES = IS_MOBILE ? 6 : 7;  // 候補手数
-const AI_CAP_BONUS_MULT  = 2;     // 取り手の評価ボーナス倍率
+
+// 難易度設定テーブル
+const DIFFICULTY_LEVELS = {
+  beginner: { label:'入門', depth:1, cands:3, noise:300, hangPenalty:0.2, emoji:'🌱' },
+  easy:     { label:'初級', depth:2, cands:5, noise:100, hangPenalty:0.5, emoji:'🌿' },
+  normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:10, hangPenalty:1.0, emoji:'⚔️' },
+  hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:0,  hangPenalty:1.5, emoji:'🔥' },
+};
+let currentDifficulty = 'normal';
+
+let AI_SEARCH_DEPTH    = DIFFICULTY_LEVELS.normal.depth;
+let AI_MOVE_CANDIDATES = DIFFICULTY_LEVELS.normal.cands;
+let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
+let AI_HANG_PENALTY_DYN= DIFFICULTY_LEVELS.normal.hangPenalty;
+
 const AI_PROXIMITY_MULT  = 15;    // 王への駒接近ボーナス係数
 const AI_ENTRY_MULT      = 50;    // 入玉距離ボーナス係数
-const AI_ESCAPE_MULT     = 100;   // 王の逃げ場評価係数
-const AI_HANG_PENALTY    = 1.0;   // タダ捨てペナルティ係数（駒価値×この値）
-const AI_ELIM_PIECE_RATE = 0.5;   // 脱落駒の評価割合
 const AI_HAND_BONUS_RATE = 1.1;   // 持ち駒の価値倍率
 const AI_SCORE_TRYWIN    = 1800000;  // 勝利手スコア（CPU最大化）
 const AI_SCORE_TRYLOSE   = -1500000; // 敗北手スコア（CPU最小化）
@@ -197,6 +245,7 @@ let viewPlayer=0; // 0=P0視点, 1=P1視点, 2=P2視点
 let humanPlayer=0; // 人間が操作するプレイヤー
 let ENEMY=0;        // AIが敵とみなすプレイヤー（=humanPlayer）
 let humanEliminated=false; // 人間が脱落したらCPU対CPU
+let cpuCollusion=true;    // CPU共闘モード（falseで三つ巴の自由対局）
 let gameGen=0;
 let kifu=[];
 
@@ -733,71 +782,96 @@ function pieceScores(b, h, owners) {
   return owners.map(o => scoresMap[o]);
 }
 
-// 静的評価
-// ・通常時: CPU連合 vs 人間
-// ・人間脱落後: CPU①の視点で①有利 = 高スコア
-function evalStatic(b, h, elim, viewPlayer){
+// ── 静的評価 ──
+// 共闘モード: CPU連合 vs 人間 / 人間脱落後 CPU同士
+// 自由対局モード: 各自が全員を敵とする「パラノイド」評価
+function evalStatic(b, h, elim, vp){
   elim = elim || eliminated;
-  const humanIsElim = elim[humanPlayer]; // isHumanと統一：グローバルで判定
-  const pieceScore = pieceScores(b,h,[0,1,2])
-    // CPU対CPU: 生きてるCPUを特定
+  const pieceScore = pieceScores(b,h,[0,1,2]);
   const cpus = [0,1,2].filter(o=>!elim[o]);
-  if(cpus.length <= 1) return 0; //勝者確定
+  if(cpus.length <= 1) return 0;
 
+  // ── 自由対局モード（三つ巴）──
+  if(!cpuCollusion){
+    const me = (vp === -1) ? cpus[0] : vp;
+    if(elim[me]) return -AI_SCORE_TRYWIN; // 自分が脱落 = 最悪
+    let score = pieceScore[me];
+    [0,1,2].filter(o=>o!==me&&!elim[o]).forEach(e => score -= pieceScore[e]);
 
-if(humanIsElim){
-  const c1=cpus[0], c2=cpus[1];
-  let score = pieceScore[c1]-pieceScore[c2];
+    // 自分の駒を全敵の王に近づけるほど有利
+    [0,1,2].filter(o=>o!==me&&!elim[o]).forEach(enemy=>{
+      const [ekr,ekc]=findKingOn(b,enemy);
+      const [mkr,mkc]=findKingOn(b,me);
+      if(ekr>=0){
+        for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+          const cell=b[r][c];
+          if(cell?.o===me&&cell?.p!=='OU')
+            score += Math.max(0,(8-Math.abs(r-ekr)-Math.abs(c-ekc)))*AI_PROXIMITY_MULT*0.5;
+        }
+        // 入玉ボーナス（自分の王が敵陣へ）
+        if(mkr>=0){
+          if(me===1) score+=(mkr-4)*AI_ENTRY_MULT*0.5;
+          else if(me===2) score+=(4-mkc)*AI_ENTRY_MULT*0.5;
+          else score+=(4-mkr)*AI_ENTRY_MULT*0.5;
+        }
+      }
+    });
 
-  const [k2r,k2c] = findKingOn(b,c2);
-  const [ck1r,ck1c] = findKingOn(b,c1);
-
-  // c1の駒がc2の王に近いほど有利
-  if(k2r>=0){
+    // 全敵の利きに自分の駒があるとペナルティ
+    const attacked=new Set();
+    [0,1,2].filter(o=>o!==me&&!elim[o]).forEach(enemy=>{
+      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+        if(b[r][c]?.o!==enemy) continue;
+        rawMoves(b,r,c).forEach(([dr,dc])=>attacked.add(dr+','+dc));
+      }
+    });
     for(let r=0;r<9;r++) for(let c=0;c<9;c++){
       const cell=b[r][c];
-      if(cell?.o===c1&&cell?.p!=='OU'){
-        score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*AI_PROXIMITY_MULT;
+      if(!cell||cell.o!==me) continue;
+      if(attacked.has(r+','+c)){
+        let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
+        score -= v * AI_HANG_PENALTY_DYN;
       }
     }
+    return score;
   }
 
-  // c2の駒がc1の王に近いほど不利
-  if(ck1r>=0){
-    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-      const cell=b[r][c];
-      if(cell?.o===c2&&cell?.p!=='OU'){
-        score -= Math.max(0,(8-Math.abs(r-ck1r)-Math.abs(c-ck1c)))*AI_PROXIMITY_MULT;
+  // ── 共闘モード（既存ロジック）──
+  const humanIsElim = elim[humanPlayer];
+
+  if(humanIsElim){
+    const c1=cpus[0], c2=cpus[1];
+    let score = pieceScore[c1]-pieceScore[c2];
+    const [k2r,k2c] = findKingOn(b,c2);
+    const [ck1r,ck1c] = findKingOn(b,c1);
+    if(k2r>=0){
+      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+        const cell=b[r][c];
+        if(cell?.o===c1&&cell?.p!=='OU')
+          score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*AI_PROXIMITY_MULT;
       }
     }
-  }
-
-  // 入玉距離（c1視点・加算）
-  if(ck1r>=0){
-    if(c1===1) score+=(ck1r-4)*AI_ENTRY_MULT;
-    else if(c1===2) score+=(4-ck1c)*AI_ENTRY_MULT;
-    else score+=(4-ck1r)*AI_ENTRY_MULT;
-  }
-
-  // 入玉距離（c2視点・減算）← 追加
-  if(k2r>=0){
-    if(c2===1) score-=(k2r-4)*AI_ENTRY_MULT;
-    else if(c2===2) score-=(4-k2c)*AI_ENTRY_MULT;
-    else score-=(4-k2r)*AI_ENTRY_MULT;
-  }
-
-  return score * ((viewPlayer === c1) * 2-1);
-} else {
-    // 通常: CPU連合 vs 人間
-    // CPU同士の駒のやりとりはスコアに影響させない
-    // → 盤上+手駒を「誰が持っているか関係なく」CPU側/人間側で合算
-
-    const hu = humanPlayer;          // human の index
-    let score = pieceScore.reduce((acc, cur, i) => {
-        return acc + (hu === i ? -cur : cur);
-    }, 0);
-
-    
+    if(ck1r>=0){
+      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+        const cell=b[r][c];
+        if(cell?.o===c2&&cell?.p!=='OU')
+          score -= Math.max(0,(8-Math.abs(r-ck1r)-Math.abs(c-ck1c)))*AI_PROXIMITY_MULT;
+      }
+    }
+    if(ck1r>=0){
+      if(c1===1) score+=(ck1r-4)*AI_ENTRY_MULT;
+      else if(c1===2) score+=(4-ck1c)*AI_ENTRY_MULT;
+      else score+=(4-ck1r)*AI_ENTRY_MULT;
+    }
+    if(k2r>=0){
+      if(c2===1) score-=(k2r-4)*AI_ENTRY_MULT;
+      else if(c2===2) score-=(4-k2c)*AI_ENTRY_MULT;
+      else score-=(4-k2r)*AI_ENTRY_MULT;
+    }
+    return score * ((vp === c1) * 2-1);
+  } else {
+    const hu = humanPlayer;
+    let score = pieceScore.reduce((acc, cur, i) => acc + (hu === i ? -cur : cur), 0);
     const [kr,kc] = findKingOn(b, hu);
     if(kr >= 0){
       [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
@@ -809,9 +883,6 @@ if(humanIsElim){
         }
       });
     }
-
-    // 人間に即取られるCPUの駒はその駒価値分をマイナス（タダ捨てペナルティ）
-    // 人間の利きマスを計算
     const huAttacked=new Set();
     for(let r=0;r<9;r++) for(let c=0;c<9;c++){
       if(b[r][c]?.o!==hu) continue;
@@ -822,9 +893,8 @@ if(humanIsElim){
         const cell=b[r][c];
         if(!cell||cell.o!==cpu) continue;
         if(huAttacked.has(r+','+c)){
-          // この駒は人間に取られる可能性がある → 価値をマイナス評価
           let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
-          score -= v * AI_HANG_PENALTY;
+          score -= v * AI_HANG_PENALTY_DYN;
         }
       }
     });
@@ -841,9 +911,9 @@ function allMovesOn(bd,hd,o,elim){
     const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
     const dests=rawMoves(bd,r,c);
     dests.forEach(([tr,tc])=>{
-      // 通常モード時: CPUがチームメイトの駒を取る手は生成しない（人間には適用しない）
+      // 共闘モード時のみ: CPUがチームメイトの駒を取る手は生成しない
       const target=bd[tr][tc];
-      if(!humanEliminated && o!==humanPlayer && target && target.o!==humanPlayer && !elim[target.o]) return;
+      if(cpuCollusion && !humanEliminated && o!==humanPlayer && target && target.o!==humanPlayer && !elim[target.o]) return;
       const canPro=!cell.pr&&['FU','KY','KE','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
       const must=mustPromote(cell.p,o,tr,tc);
@@ -903,46 +973,41 @@ function quickMoveScore(bd, mv) {
 
 // ミニマックス探索
 // depth = 残り手数（1手ごとに-1）
+// rootAI: 自由対局モードで「誰の視点か」を示す（パラノイド探索）
 
-function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer){
+function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
 
-  if(depth <= 0) return evalStatic(bd, hd, elim,turnPlayer);
-  if(turnPlayer === -1) return evalStatic(bd, hd, elim,turnPlayer);
+  if(depth <= 0) return evalStatic(bd, hd, elim, cpuCollusion ? turnPlayer : rootAI);
+  if(turnPlayer === -1) return evalStatic(bd, hd, elim, cpuCollusion ? turnPlayer : rootAI);
 
   const aliveCount = elim.filter(e=>!e).length;
-  if(aliveCount <= 1) return evalStatic(bd, hd, elim,turnPlayer);
+  if(aliveCount <= 1) return evalStatic(bd, hd, elim, cpuCollusion ? turnPlayer : rootAI);
 
-
-  // 通常: 人間=最小化、CPU=最大化
-  // CPU対CPU: cpus[0]=最大化、cpus[1]=最小化（evalStaticはcpus[0]視点固定）
+  // 自由対局: rootAI のみ最大化、他は全員「敵」として最小化（パラノイド）
+  // 共闘モード: 人間のみ最小化、CPU全員最大化
   let isHuman;
-  if(humanEliminated){
+  if(!cpuCollusion){
+    isHuman = (turnPlayer !== rootAI); // rootAI以外は全員ミニマイザー
+  } else if(humanEliminated){
     const liveCpus = [0,1,2].filter(o=>!elim[o]);
     isHuman = liveCpus.length >= 2 && turnPlayer === liveCpus[1];
   } else {
     isHuman = turnPlayer === humanPlayer;
   }
-  
 
   const nxt = nextAliveOn(elim, turnPlayer);
 
-  //合法手生成
   let moves = allMovesOn(bd, hd, turnPlayer, elim);
-
-
   moves.sort((a, b) => quickMoveScore(bd, b) - quickMoveScore(bd, a));
   moves = moves.slice(0, AI_MOVE_CANDIDATES);
 
-
-
-  //各候補手に再帰
   if(isHuman){
     let best = Infinity;
     for(const mv of moves){
       const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
       if(tryWin) return AI_SCORE_TRYLOSE;
       const nxtH = nextAliveOn(newElim, turnPlayer);
-      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxtH, 0) + (Math.random()-0.5)*10;
+      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxtH, rootAI) + (Math.random()-0.5)*AI_NOISE;
       best = Math.min(best, score);
       beta = Math.min(beta, score);
       if(beta <= alpha) break;
@@ -950,12 +1015,11 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer){
     return best;
   } else {
     let best = -Infinity;
-    
     for(const mv of moves){
       const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
       if(tryWin) return AI_SCORE_TRYWIN;
       const nxt2 = nextAliveOn(newElim, turnPlayer);
-      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, 0)+ (Math.random()-0.5)*10;
+      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, rootAI)+ (Math.random()-0.5)*AI_NOISE;
       best = Math.max(best, score);
       alpha = Math.max(alpha, score);
       if(beta <= alpha) break;
@@ -998,7 +1062,7 @@ function aiMove(o,bd,hd,elim){
     const nxt = nextAliveOn(newElim, o);
     const aliveNow = newElim.filter(e=>!e).length;
     const searchDepth = AI_SEARCH_DEPTH;
-    const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt);
+    const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt, o);
     
     if(v>bestScore){bestScore=v;best=mv;}
   }
@@ -1413,6 +1477,57 @@ function drawPromoDialog(){
   ctx.fillText('成らない',dx+195,dy+74);
 }
 
+function setCpuCollusion(val){
+  cpuCollusion = val;
+  const onBtn  = document.getElementById('col-on');
+  const offBtn = document.getElementById('col-off');
+  const lbl    = document.getElementById('col-label');
+  if(onBtn){
+    onBtn.style.background  = val  ? '#7a3a00' : '#2a1200';
+    onBtn.style.border      = val  ? '1px solid #ffaa44' : '1px solid #804010';
+    onBtn.style.color       = val  ? '#ffe090' : '#c0a060';
+    onBtn.style.boxShadow   = val  ? '0 0 10px rgba(255,170,50,0.4)' : 'none';
+  }
+  if(offBtn){
+    offBtn.style.background = !val ? '#003a70' : '#2a1200';
+    offBtn.style.border     = !val ? '1px solid #44aaff' : '1px solid #804010';
+    offBtn.style.color      = !val ? '#aaddff' : '#c0a060';
+    offBtn.style.boxShadow  = !val ? '0 0 10px rgba(50,150,255,0.4)' : 'none';
+  }
+  if(lbl) lbl.textContent = val ? '🤝 共闘: ON' : '⚔ 三つ巴: ON';
+  // ルール説明の警告文も更新
+  const warn = document.getElementById('collusion-warning');
+  if(warn){
+    warn.innerHTML = val
+      ? '⚠️ <span style="color:#ff4433">CPU①</span>・<span style="color:#33bb55">CPU②</span>は共闘してあなたを狙ってきます。'
+      : '⚔️ <span style="color:#ff4433">CPU①</span>・<span style="color:#33bb55">CPU②</span>は<span style="color:#ffcc44">それぞれ自分の勝利</span>を目指します。';
+  }
+}
+
+function setDifficulty(level){
+  const cfg = DIFFICULTY_LEVELS[level];
+  if(!cfg) return;
+  currentDifficulty = level;
+  AI_SEARCH_DEPTH    = cfg.depth;
+  AI_MOVE_CANDIDATES = cfg.cands;
+  AI_NOISE           = cfg.noise;
+  AI_HANG_PENALTY_DYN= cfg.hangPenalty;
+  // ボタンハイライト更新
+  Object.keys(DIFFICULTY_LEVELS).forEach(k=>{
+    const btn=document.getElementById('diff-'+k);
+    if(btn){
+      const active = k===level;
+      btn.style.background   = active ? '#7a3a00' : '#2a1200';
+      btn.style.border       = active ? '1px solid #ffaa44' : '1px solid #804010';
+      btn.style.color        = active ? '#ffe090' : '#c0a060';
+      btn.style.boxShadow    = active ? '0 0 10px rgba(255,170,50,0.4)' : 'none';
+    }
+  });
+  // 難易度ラベル更新
+  const lbl = document.getElementById('diff-label');
+  if(lbl) lbl.textContent = cfg.emoji+' 難易度: '+cfg.label;
+}
+
 window.addEventListener('DOMContentLoaded', () => {
   canvas = document.getElementById('c');
   ctx = canvas.getContext('2d');
@@ -1420,6 +1535,8 @@ window.addEventListener('DOMContentLoaded', () => {
   canvas.addEventListener('click', handleClick);
   window.addEventListener('resize', fitCanvas);
   fitCanvas();
+  setDifficulty('normal');
+  setCpuCollusion(true);
   setHumanPlayer(0);
 });
 </script>
