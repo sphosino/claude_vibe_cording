@@ -1,0 +1,1248 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>EVOLUTION — Not Only Human</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+html,body { width:100%; height:100%; background:#030609; overflow:hidden; }
+canvas { display:block; position:fixed; top:0; left:0; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// ═══════════════════════════════════════════════════════
+//  EVOLUTION — Not Only Human
+//  360°自動シューター  進化系生命体 vs 人類
+// ═══════════════════════════════════════════════════════
+
+const canvas = document.getElementById('c');
+const ctx    = canvas.getContext('2d');
+let W = canvas.width  = window.innerWidth;
+let H = canvas.height = window.innerHeight;
+window.addEventListener('resize', () => {
+  W = canvas.width  = window.innerWidth;
+  H = canvas.height = window.innerHeight;
+});
+
+// ═══════════════════════════════════════════════════════
+//  ⚙  BALANCE CONSTANTS — ここを触ればゲームバランス調整OK
+// ═══════════════════════════════════════════════════════
+const B = {
+  // ── プレイヤー初期値 ──────────────────────────────────
+  PLAYER_HP:          130,   // 初期HP
+  PLAYER_SPD:         2.8,   // 初期移動速度
+  PLAYER_BULLET:      6,     // 初期弾数
+  PLAYER_FIRE_RATE:   880,   // 初期連射間隔(ms)　小さいほど速い
+
+  // ── プレイヤー強化上限 ────────────────────────────────
+  MAX_BULLET:         20,    // 弾数上限
+  MAX_FIRE_RATE:      200,   // 連射間隔下限(ms)
+  MAX_SPD:            5.5,   // 移動速度上限
+  MAX_BSZ:            1.8,   // 弾サイズ上限
+
+  // ── アイテム強化量 ────────────────────────────────────
+  ITEM_BULLET_UP:     1,     // 弾数+
+  ITEM_FIRERATE_UP:   85,    // 連射間隔減少量(ms)
+  ITEM_SPEED_UP:      0.35,  // 移動速度+
+  ITEM_SIZE_UP:       0.15,  // 弾サイズ+
+  ITEM_HEAL_AMT:      30,    // HP回復量
+
+  // ── アイテムドロップ ──────────────────────────────────
+  ITEM_DROP_RATE:     0.26,  // ドロップ確率 (0〜1)
+  ITEM_LIFETIME:      380,   // アイテム消えるまでのフレーム数
+
+  // ── 敵スポーン ────────────────────────────────────────
+  ENEMY_MAX:          160,   // 同時出現上限
+  SPAWN_BASE:         55,    // スポーン間隔基準(フレーム)　小さいほど速い
+  SPAWN_WAVE_DEC:     10,    // Waveごとの間隔減少量
+  SPAWN_MIN:          12,    // スポーン間隔の最小値
+  SPAWN_BASE_COUNT:   1,     // 基本スポーン数
+  SPAWN_WAVE_MULT:    1.5,   // Waveごとのスポーン数増加係数
+
+  // ── 敵のWave強化 ─────────────────────────────────────
+  ENEMY_HP_SCALE:     0.22,  // WaveごとのHP増加率 (wave * この値)
+  ENEMY_SPD_SCALE:    0.17,  // Waveごとの速度増加率
+
+  // ── 戦闘 ─────────────────────────────────────────────
+  WEAK_DMG_MULT:      2.5,   // 弱点属性のダメージ倍率
+  WEAK_SCORE_MULT:    2,     // 弱点属性のスコア倍率
+  CONTACT_DMG:        4,     // 敵接触ダメージ
+  INVINCIBLE_FRAMES:  70,    // 被弾後の無敵フレーム数
+  BULLET_LIFE:        130,   // 弾の寿命(フレーム)
+  EXPLODE_RADIUS:     68,    // 緑弾爆発の範囲
+
+  // ── ゲーム進行 ────────────────────────────────────────
+  WAVE_INTERVAL:      35,    // Wave切り替わり間隔(秒)
+  GAME_DURATION:      188,   // ゲーム終了時間(秒)
+  NEWS_INTERVAL:      13.5,  // ニュース切り替わり間隔(秒)
+
+  // ── 進化条件 ─────────────────────────────────────────
+  EVO1_BULLET:        9,     // 変異体：弾数条件
+  EVO1_FIRERATE:      650,   // 変異体：連射速度条件(ms以下)
+  EVO2_BULLET:        14,    // 怪物体：弾数条件
+  EVO2_FIRERATE:      500,   // 怪物体：連射速度条件(ms以下)
+};
+// ═══════════════════════════════════════════════════════
+
+// ─────────────────────── DATA TABLES ───────────────────────
+
+const BULLET = {
+  RED:   { color:'#ff3333', glow:'#ff0000', dmg:15, spd:6.0, sz:5,  pierce:false, explode:false },
+  BLUE:  { color:'#33aaff', glow:'#0066ff', dmg:11, spd:8.5, sz:4,  pierce:true,  explode:false },
+  GREEN: { color:'#33ff77', glow:'#00ff44', dmg:9,  spd:4.5, sz:6,  pierce:false, explode:true  },
+};
+// enemy.weakTo === bullet type → 2.5× damage
+const ENEMY = {
+  INFANTRY: { col:'#ff5566', name:'歩兵',   hp:45,  spd:0.58, sz:14, score:10, weakTo:'BLUE',  minWave:0 },
+  BIKE:     { col:'#5577ff', name:'バイク', hp:30,  spd:1.45, sz:11, score:20, weakTo:'GREEN', minWave:1 },
+  TANK:     { col:'#44bb55', name:'戦車',   hp:180, spd:0.26, sz:27, score:50, weakTo:'RED',   minWave:2 },
+  HELI:     { col:'#ffaa33', name:'ヘリ',   hp:85,  spd:0.95, sz:20, score:35, weakTo:'RED',   minWave:3 },
+};
+const ITEM_COL   = { 'BULLET+':'#ffff44','FIRERATE':'#ff8844','SPEED':'#44ffff','SIZE':'#ff44ff','HEAL':'#ff88aa' };
+const ITEM_LABEL = { 'BULLET+':'弾↑','FIRERATE':'速↑','SPEED':'足↑','SIZE':'大↑','HEAL':'HP↑' };
+const ITEM_KEYS  = Object.keys(ITEM_COL);
+const EVO_LABEL  = ['初期体','変異体','怪物体','完全体'];
+const NEWS = [
+  '【速報】未確認生命体の出現を確認——軍が調査を開始',
+  '【緊急】市街地への接近を確認・住民は即時避難せよ',
+  '【速報】歩兵部隊が交戦中——損害は軽微と発表',
+  '【速報】バイク偵察部隊を追加投入——包囲網を構築中',
+  '【緊急】生命体に変異の兆候——攻撃が激化している',
+  '【速報】戦車部隊が展開——制圧作戦を開始',
+  '【緊急】戦車部隊と交戦中——苦戦の模様',
+  '【速報】政府が非常事態宣言を発令',
+  '【緊急】ヘリコプター部隊も出動——多方面から包囲へ',
+  '【速報】生命体、さらなる進化を確認——識者は絶句',
+  '【緊急】全部隊が壊滅状態——包囲網が崩れつつある',
+  '【速報】政府、最終手段を検討中',
+  '【警告】核使用を大統領が承認',
+  '【警告】核攻撃まで60秒  繰り返す  核攻撃まで60秒',
+];
+
+// ─────────────────────── STATE ───────────────────────
+
+let state    = 'TITLE'; // TITLE | PLAYING | ENDING | GAMEOVER
+let score    = 0;
+let elapsed  = 0;
+let endTimer = 0;
+let lastTime = 0;
+let spawnTimer = 0;
+let newsIdx  = 0;
+
+const player = {
+  x:0, y:0, hp:B.PLAYER_HP, maxHp:B.PLAYER_HP, spd:B.PLAYER_SPD,
+  mode:'RED', bCount:B.PLAYER_BULLET, fireRate:B.PLAYER_FIRE_RATE, bSpd:1.0, bSz:1.0,
+  fireAngle:0, mixIdx:0, lastFire:0, evoStage:0, invincible:0,
+};
+
+let bullets=[], enemies=[], items=[], particles=[], floatMsgs=[];
+let keys={};
+
+// ─────────────────────── AUDIO (Web Audio API) ───────────────────────
+
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function playTone(freq, type, dur, vol, freqEnd) {
+  if (!audioCtx) return;
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.connect(g); g.connect(audioCtx.destination);
+  o.type = type;
+  o.frequency.setValueAtTime(freq, audioCtx.currentTime);
+  if (freqEnd) o.frequency.exponentialRampToValueAtTime(freqEnd, audioCtx.currentTime + dur);
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  o.start(); o.stop(audioCtx.currentTime + dur);
+}
+function playNoise(dur, vol, cutoff) {
+  if (!audioCtx) return;
+  const len = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+  const d   = buf.getChannelData(0);
+  for (let i=0;i<len;i++) d[i] = Math.random()*2-1;
+  const src = audioCtx.createBufferSource();
+  const flt = audioCtx.createBiquadFilter();
+  const g   = audioCtx.createGain();
+  flt.type = 'lowpass'; flt.frequency.value = cutoff;
+  src.buffer = buf;
+  src.connect(flt); flt.connect(g); g.connect(audioCtx.destination);
+  g.gain.setValueAtTime(vol, audioCtx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+  src.start();
+}
+let lastFireSound = 0;
+function sfxFire()    { const n=performance.now(); if(n-lastFireSound<60) return; lastFireSound=n; playTone(300,'square',0.04,0.04,120); }
+function sfxHit()     { playNoise(0.06, 0.12, 800); }
+function sfxExplode() { playNoise(0.22, 0.28, 350); }
+function sfxItem()    { playTone(880,'sine',0.05,0.1); setTimeout(()=>playTone(1320,'sine',0.08,0.08),50); }
+function sfxDamage()  { playTone(180,'sawtooth',0.12,0.15,80); }
+
+// ─────────────────────── INPUT ───────────────────────
+
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  const gameKeys = ['Space','Enter','ArrowLeft','ArrowRight','ArrowUp','ArrowDown',
+                    'KeyA','KeyW','KeyS','KeyD','KeyM','Digit1','Digit2','Digit3','Digit4'];
+  if (gameKeys.includes(e.code)) e.preventDefault();
+
+  if ((e.code==='Space'||e.code==='Enter') && state==='TITLE') { ensureAudio(); startGame(); }
+  if ((e.code==='Space'||e.code==='Enter') && (state==='GAMEOVER'||state==='HUMANWIN')) state='TITLE';
+  if (state==='PLAYING') {
+    if (e.code==='Digit1') player.mode='RED';
+    if (e.code==='Digit2') player.mode='BLUE';
+    if (e.code==='Digit3') player.mode='GREEN';
+    if (e.code==='Digit4'||e.code==='KeyM') player.mode='MIXED';
+  }
+});
+window.addEventListener('keyup', e => { keys[e.code]=false; });
+
+// マウス移動目標
+let mouseTgt = null;  // {x, y}
+
+canvas.addEventListener('click', e => {
+  ensureAudio();
+  if (state==='TITLE')    { startGame(); return; }
+  if (state==='GAMEOVER'||state==='HUMANWIN') { state='TITLE'; return; }
+  if (state!=='PLAYING') return;
+
+  const cx=e.clientX, cy=e.clientY;
+
+  // モードボタン判定 — 左下 (y: H-BH-36 〜 H-36, 幅78, gap84)
+  const BW=78, BH=46, BGAP=84, BY=H-BH-36;
+  if (cy>=BY && cy<=BY+BH) {
+    const modes=['RED','BLUE','GREEN','MIXED'];
+    for (let i=0;i<4;i++) {
+      if (cx>=14+BGAP*i && cx<=14+BGAP*i+BW) { player.mode=modes[i]; return; }
+    }
+  }
+
+  // それ以外はクリック地点へ移動
+  mouseTgt = {x:cx, y:cy};
+});
+
+// ─────────────────────── GAME LOGIC ───────────────────────
+
+function startGame() {
+  state='PLAYING'; score=0; elapsed=0; endTimer=0; newsIdx=0;
+  bullets=[]; enemies=[]; items=[]; particles=[]; floatMsgs=[];
+  spawnTimer=0;
+  Object.assign(player, {
+    x:W/2, y:H/2, hp:B.PLAYER_HP, maxHp:B.PLAYER_HP, spd:B.PLAYER_SPD,
+    mode:'RED', bCount:B.PLAYER_BULLET, fireRate:B.PLAYER_FIRE_RATE, bSpd:1.0, bSz:1.0,
+    fireAngle:0, mixIdx:0, lastFire:0, evoStage:0, invincible:0,
+  });
+}
+
+function currentWave() { return Math.min(Math.floor(elapsed/B.WAVE_INTERVAL), 4); }
+
+function fireBullets(now) {
+  if (now - player.lastFire < player.fireRate) return;
+  player.lastFire = now;
+  player.fireAngle += 0.13;
+  const step = (Math.PI*2) / player.bCount;
+  sfxFire();
+  for (let i=0; i<player.bCount; i++) {
+    const type = player.mode==='MIXED'
+      ? ['RED','BLUE','GREEN'][(player.mixIdx+i)%3]
+      : player.mode;
+    const bd  = BULLET[type];
+    const ang = step*i + player.fireAngle;
+    bullets.push({
+      x:player.x, y:player.y,
+      vx:Math.cos(ang)*bd.spd*player.bSpd,
+      vy:Math.sin(ang)*bd.spd*player.bSpd,
+      type, dmg:bd.dmg, sz:bd.sz*player.bSz,
+      pierce:bd.pierce, explode:bd.explode,
+      hitSet:new Set(), life:B.BULLET_LIFE,
+    });
+  }
+  if (player.mode==='MIXED') player.mixIdx++;
+}
+
+function spawnEnemy() {
+  if (enemies.length >= B.ENEMY_MAX) return;
+  const wave = currentWave();
+  const pool = Object.entries(ENEMY).filter(([,v])=>v.minWave<=wave).map(([k])=>k);
+  const type = pool[Math.floor(Math.random()*pool.length)];
+  const ed   = ENEMY[type];
+  let x,y;
+  const side = Math.floor(Math.random()*4);
+  const m = 65;
+  if      (side===0){x=Math.random()*W;y=-m;}
+  else if (side===1){x=W+m;y=Math.random()*H;}
+  else if (side===2){x=Math.random()*W;y=H+m;}
+  else              {x=-m;y=Math.random()*H;}
+  enemies.push({
+    x,y, type, hp:ed.hp*(1+wave*B.ENEMY_HP_SCALE), maxHp:ed.hp*(1+wave*B.ENEMY_HP_SCALE),
+    spd:ed.spd*(1+wave*B.ENEMY_SPD_SCALE), sz:ed.sz,
+    col:ed.col, score:ed.score, weakTo:ed.weakTo,
+    flash:0, id:Math.random(),
+  });
+}
+
+function doExplosion(x, y, radius, dmg, srcType) {
+  sfxExplode();
+  for (let i=enemies.length-1;i>=0;i--) {
+    const e=enemies[i];
+    if (Math.hypot(e.x-x,e.y-y)<radius+e.sz) {
+      let d=dmg; if(e.weakTo===srcType) d*=B.WEAK_DMG_MULT;
+      e.hp-=d; e.flash=8;
+      spawnParticles(e.x,e.y,6,e.col);
+      if (e.hp<=0) {
+        score+=e.score; spawnParticles(e.x,e.y,14,e.col); tryDropItem(e.x,e.y); enemies.splice(i,1);
+      }
+    }
+  }
+  for (let a=0;a<Math.PI*2;a+=0.28) {
+    particles.push({x:x+Math.cos(a)*6,y:y+Math.sin(a)*6,vx:Math.cos(a)*4,vy:Math.sin(a)*4,
+      color:'#33ff7766',sz:5,life:28,maxLife:28});
+  }
+  spawnParticles(x,y,22,'#33ff77');
+}
+
+function spawnParticles(x,y,n,color) {
+  if (particles.length>800) return;
+  for (let i=0;i<n;i++) {
+    const a=Math.random()*Math.PI*2, s=Math.random()*3.5+0.5;
+    particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,color,
+      sz:Math.random()*3+1,life:Math.floor(Math.random()*25)+15,maxLife:40});
+  }
+}
+
+function tryDropItem(x,y) {
+  if (Math.random()>B.ITEM_DROP_RATE) return;
+  const type=ITEM_KEYS[Math.floor(Math.random()*ITEM_KEYS.length)];
+  items.push({x,y,type,life:B.ITEM_LIFETIME,phase:Math.random()*Math.PI*2});
+}
+
+function collectItem(type) {
+  sfxItem();
+  switch(type) {
+    case 'BULLET+':  player.bCount   = Math.min(player.bCount+B.ITEM_BULLET_UP,  B.MAX_BULLET);    floatMsg('弾数 +1 ↑'); break;
+    case 'FIRERATE': player.fireRate = Math.max(player.fireRate-B.ITEM_FIRERATE_UP,B.MAX_FIRE_RATE); floatMsg('連射速度 ↑'); break;
+    case 'SPEED':    player.spd      = Math.min(player.spd+B.ITEM_SPEED_UP,       B.MAX_SPD);       floatMsg('移動速度 ↑'); break;
+    case 'SIZE':     player.bSz      = Math.min(player.bSz+B.ITEM_SIZE_UP,        B.MAX_BSZ);       floatMsg('弾サイズ ↑'); break;
+    case 'HEAL':     player.hp       = Math.min(player.hp+B.ITEM_HEAL_AMT,        player.maxHp);    floatMsg('HP 回復 ♥'); break;
+  }
+}
+
+function floatMsg(text) {
+  floatMsgs.push({text,x:W/2,y:player.y-70,life:85,maxLife:85});
+}
+
+// ─────────────────────── EVO EFFECT ───────────────────────
+
+let evoFlash = 0;
+const EVO_FLASH_COL = ['','#33ffcc','#ff8833','#ff2200'];
+function triggerEvoEffect(stage) {
+  evoFlash = 90;
+  const labels = ['','変異体に進化！','怪物体に進化！！','完全体 ———— !!'];
+  floatMsg(labels[stage]);
+  spawnParticles(player.x, player.y, 40, EVO_FLASH_COL[stage]);
+  playTone(220,'sawtooth',0.06,0.2,880);
+  setTimeout(()=>playTone(440,'square',0.12,0.15,1760),80);
+}
+
+// ─────────────────────── UPDATE ───────────────────────
+
+function updatePlaying(now, dt) {
+  elapsed += dt/1000;
+  // 進化段階 = 強さ連動
+  const prevEvo = player.evoStage;
+  const allMax = player.bCount>=B.MAX_BULLET && player.fireRate<=B.MAX_FIRE_RATE && player.spd>=B.MAX_SPD && player.bSz>=B.MAX_BSZ;
+  if      (allMax)                                                              player.evoStage=3;
+  else if (player.bCount>=B.EVO2_BULLET && player.fireRate<=B.EVO2_FIRERATE)  player.evoStage=2;
+  else if (player.bCount>=B.EVO1_BULLET || player.fireRate<=B.EVO1_FIRERATE)  player.evoStage=1;
+  else                                                                          player.evoStage=0;
+  if (player.evoStage>prevEvo) triggerEvoEffect(player.evoStage);
+  newsIdx = Math.min(Math.floor(elapsed/B.NEWS_INTERVAL), NEWS.length-1);
+
+  // Spawn
+  const wave = currentWave();
+  const interval = Math.max(B.SPAWN_BASE-wave*B.SPAWN_WAVE_DEC, B.SPAWN_MIN);
+  if (++spawnTimer >= interval) {
+    spawnTimer=0;
+    const n=B.SPAWN_BASE_COUNT+Math.floor(wave*B.SPAWN_WAVE_MULT);
+    for (let i=0;i<n;i++) spawnEnemy();
+  }
+
+  // Ending trigger
+  if (elapsed>=B.GAME_DURATION) { state=player.evoStage===3?'ENDING':'HUMANWIN'; endTimer=0; return; }
+
+  // Move player
+  let mx=0,my=0;
+  if (keys['ArrowLeft'] ||keys['KeyA']) mx-=1;
+  if (keys['ArrowRight']||keys['KeyD']) mx+=1;
+  if (keys['ArrowUp']   ||keys['KeyW']) my-=1;
+  if (keys['ArrowDown'] ||keys['KeyS']) my+=1;
+
+  if (mx||my) {
+    // キー入力中はマウス目標をキャンセル
+    mouseTgt=null;
+    if (mx&&my){mx*=0.707;my*=0.707;}
+    player.x = Math.max(22,Math.min(W-22,player.x+mx*player.spd));
+    player.y = Math.max(22,Math.min(H-22,player.y+my*player.spd));
+  } else if (mouseTgt) {
+    // マウス目標へスムーズ移動
+    const tdx=mouseTgt.x-player.x, tdy=mouseTgt.y-player.y;
+    const dist=Math.hypot(tdx,tdy);
+    if (dist<3) {
+      mouseTgt=null; // 到着
+    } else {
+      const step=Math.min(player.spd, dist);
+      player.x = Math.max(22,Math.min(W-22, player.x+tdx/dist*step));
+      player.y = Math.max(22,Math.min(H-22, player.y+tdy/dist*step));
+    }
+  }
+  if (player.invincible>0) player.invincible--;
+
+  fireBullets(now);
+
+  // Update bullets
+  for (let i=bullets.length-1;i>=0;i--) {
+    const b=bullets[i];
+    b.x+=b.vx; b.y+=b.vy; b.life--;
+    if (b.life<=0||b.x<-65||b.x>W+65||b.y<-65||b.y>H+65) { bullets.splice(i,1); continue; }
+    let destroyed=false;
+    for (let j=enemies.length-1;j>=0;j--) {
+      const e=enemies[j];
+      if (b.hitSet.has(e.id)) continue;
+      if (Math.hypot(b.x-e.x,b.y-e.y)<b.sz+e.sz) {
+        let dmg=b.dmg; if(e.weakTo===b.type) dmg*=B.WEAK_DMG_MULT;
+        e.hp-=dmg; e.flash=8;
+        sfxHit();
+        spawnParticles(b.x,b.y,5,BULLET[b.type].color);
+        if (e.hp<=0) {
+          score+=e.score*(e.weakTo===b.type?B.WEAK_SCORE_MULT:1);
+          spawnParticles(e.x,e.y,15,e.col);
+          tryDropItem(e.x,e.y);
+          enemies.splice(j,1);
+        }
+        if (b.explode) {
+          doExplosion(b.x,b.y,B.EXPLODE_RADIUS,b.dmg*0.7,b.type);
+          bullets.splice(i,1); destroyed=true; break;
+        }
+        if (b.pierce) { b.hitSet.add(e.id); }
+        else { bullets.splice(i,1); destroyed=true; break; }
+      }
+    }
+  }
+
+  // Update enemies
+  for (let i=enemies.length-1;i>=0;i--) {
+    const e=enemies[i];
+    if (e.flash>0) e.flash--;
+    const dx=player.x-e.x, dy=player.y-e.y, dist=Math.hypot(dx,dy);
+    if (dist>0.5) { e.x+=dx/dist*e.spd; e.y+=dy/dist*e.spd; }
+    if (dist<e.sz+18&&player.invincible<=0) {
+      player.hp-=B.CONTACT_DMG; player.invincible=B.INVINCIBLE_FRAMES; sfxDamage();
+      spawnParticles(player.x,player.y,10,'#ff3333');
+      if (player.hp<=0) { player.hp=0; state='GAMEOVER'; endTimer=0; return; }
+    }
+  }
+
+  // Update items
+  for (let i=items.length-1;i>=0;i--) {
+    const it=items[i]; it.life--; it.phase+=0.055;
+    if (it.life<=0){items.splice(i,1);continue;}
+    if (Math.hypot(player.x-it.x,player.y-it.y)<26) {
+      collectItem(it.type); spawnParticles(it.x,it.y,8,ITEM_COL[it.type]); items.splice(i,1);
+    }
+  }
+
+  // Particles
+  for (let i=particles.length-1;i>=0;i--) {
+    const p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.vx*=0.94; p.vy*=0.94; p.life--;
+    if (p.life<=0) particles.splice(i,1);
+  }
+
+  // Float messages
+  for (let i=floatMsgs.length-1;i>=0;i--) {
+    floatMsgs[i].life--; floatMsgs[i].y-=0.65;
+    if (floatMsgs[i].life<=0) floatMsgs.splice(i,1);
+  }
+}
+
+function updateEnding() {
+  endTimer++;
+  for (let i=particles.length-1;i>=0;i--) {
+    const p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.vx*=0.94; p.vy*=0.94; p.life--;
+    if (p.life<=0) particles.splice(i,1);
+  }
+}
+
+// ─────────────────────── RENDER ───────────────────────
+
+function render(now) {
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#030609'; ctx.fillRect(0,0,W,H);
+  drawGrid(now);
+
+  if (state==='TITLE')    { drawTitle(now);    return; }
+  if (state==='HUMANWIN') { drawHumanWin(now); return; }
+  if (state==='GAMEOVER') { drawGameOver();    return; }
+  if (state==='ENDING')   { drawEnding(now);   return; }
+
+  // Particles (behind)
+  drawParticles();
+
+  // Items
+  for (const it of items) drawItem(it);
+
+  // Enemies
+  for (const e of enemies) drawEnemy(e, now);
+
+  // Bullets
+  for (const b of bullets) drawBullet(b);
+
+  // Player
+  drawPlayer(now);
+
+  // HUD
+  drawHUD();
+
+  // Float msgs
+  ctx.textAlign='center';
+  for (const m of floatMsgs) {
+    ctx.globalAlpha = m.life/m.maxLife;
+    ctx.shadowColor='#ffffff'; ctx.shadowBlur=10;
+    ctx.fillStyle='#ffffff';
+    ctx.font='bold 16px monospace';
+    ctx.fillText(m.text, m.x, m.y);
+  }
+  ctx.globalAlpha=1; ctx.shadowBlur=0; ctx.textAlign='left';
+}
+
+function drawGrid(now) {
+  const t=now*0.00015;
+  ctx.strokeStyle='rgba(30,80,55,0.09)'; ctx.lineWidth=1;
+  const gs=60;
+  for (let x=(t*12)%gs; x<W; x+=gs){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=(t*8)%gs;  y<H; y+=gs){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = Math.max(0, p.life/p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.sz,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawBullet(b) {
+  const bd=BULLET[b.type];
+  ctx.shadowColor=bd.glow; ctx.shadowBlur=15;
+  ctx.fillStyle=bd.color;
+  ctx.beginPath(); ctx.arc(b.x,b.y,b.sz,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0;
+}
+
+function drawPlayer(now) {
+  const p=player, t=now/1000, st=p.evoStage;
+  const pulse=1+Math.sin(t*4)*0.11;
+  const bodyR=(14+st*4.5)*pulse;
+  const COLS=['#44ff88','#33ffcc','#22ffaa','#11ff55'];
+  const col=COLS[st];
+
+  ctx.save(); ctx.translate(p.x,p.y);
+
+  // Aura
+  const ag=ctx.createRadialGradient(0,0,0,0,0,bodyR*3);
+  ag.addColorStop(0,col+'2a'); ag.addColorStop(1,'transparent');
+  ctx.fillStyle=ag; ctx.beginPath(); ctx.arc(0,0,bodyR*3,0,Math.PI*2); ctx.fill();
+
+  ctx.shadowColor=col; ctx.shadowBlur=22;
+
+  if (st===0) {
+    // Blob
+    ctx.fillStyle=col;
+    ctx.beginPath(); ctx.arc(0,0,bodyR,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#001a05';
+    ctx.beginPath(); ctx.arc(-5,-3,3.2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 5,-3,3.2,0,Math.PI*2); ctx.fill();
+
+  } else if (st===1) {
+    // Spiked
+    ctx.fillStyle=col;
+    ctx.beginPath();
+    for (let i=0;i<10;i++) {
+      const a=(i/10)*Math.PI*2+t*0.65, r=i%2===0?bodyR:bodyR*0.62;
+      i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#001a05';
+    ctx.beginPath(); ctx.arc(-6,-4.5,3.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 6,-4.5,3.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ff4400';
+    ctx.beginPath(); ctx.arc(-6,-4.5,1.8,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 6,-4.5,1.8,0,Math.PI*2); ctx.fill();
+
+  } else if (st===2) {
+    // Clawed
+    for (let i=0;i<6;i++) {
+      const a=(i/6)*Math.PI*2+t*0.5;
+      const lx=Math.cos(a)*bodyR*1.6, ly=Math.sin(a)*bodyR*1.6;
+      ctx.strokeStyle=col+'99'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(lx,ly); ctx.stroke();
+      ctx.fillStyle=col;
+      ctx.beginPath(); ctx.arc(lx,ly,5.5,0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle=col;
+    ctx.beginPath();
+    for (let i=0;i<12;i++) {
+      const a=(i/12)*Math.PI*2+t*0.4, r=i%3===0?bodyR:bodyR*0.68;
+      i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#ff2200'; ctx.shadowColor='#ff0000'; ctx.shadowBlur=14;
+    ctx.beginPath(); ctx.arc(-7,-5.5,4.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 7,-5.5,4.5,0,Math.PI*2); ctx.fill();
+
+  } else {
+    // Tentacle monster
+    for (let i=0;i<10;i++) {
+      const a=(i/10)*Math.PI*2+t*0.38;
+      const w2=Math.sin(t*2.2+i*0.9)*0.42;
+      const len=bodyR*2.4;
+      const tx=Math.cos(a+w2)*len, ty=Math.sin(a+w2)*len;
+      const cx2=Math.cos(a+1.3)*len*0.5, cy2=Math.sin(a+1.3)*len*0.5;
+      ctx.strokeStyle=col+'88'; ctx.lineWidth=5.5; ctx.shadowBlur=20;
+      ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(cx2,cy2,tx,ty); ctx.stroke();
+    }
+    ctx.shadowBlur=25;
+    ctx.fillStyle=col;
+    ctx.beginPath();
+    for (let i=0;i<16;i++) {
+      const a=(i/16)*Math.PI*2+t*0.72, r=i%2===0?bodyR:bodyR*0.7;
+      i===0?ctx.moveTo(Math.cos(a)*r,Math.sin(a)*r):ctx.lineTo(Math.cos(a)*r,Math.sin(a)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#ff0000'; ctx.shadowColor='#ff0000'; ctx.shadowBlur=22;
+    ctx.beginPath(); ctx.arc(-8.5,-6,5.5,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 8.5,-6,5.5,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ffff00';
+    ctx.beginPath(); ctx.arc(-8.5,-6,2.8,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc( 8.5,-6,2.8,0,Math.PI*2); ctx.fill();
+  }
+
+  ctx.shadowBlur=0; ctx.restore();
+
+  // HP bar
+  const bw=58, hpR=player.hp/player.maxHp;
+  ctx.fillStyle='#111'; ctx.fillRect(p.x-bw/2, p.y+bodyR+5, bw, 5);
+  ctx.fillStyle=hpR>0.5?'#44ff88':hpR>0.25?'#ffaa33':'#ff3333';
+  ctx.fillRect(p.x-bw/2, p.y+bodyR+5, bw*hpR, 5);
+
+  // Invincibility flash
+  if (player.invincible>0 && Math.floor(player.invincible/5)%2===0) {
+    ctx.globalAlpha=0.28; ctx.fillStyle='#ffffff';
+    ctx.beginPath(); ctx.arc(p.x,p.y,bodyR+6,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+  }
+}
+
+function drawEnemy(e, now) {
+  const t=now/1000, sz=e.sz;
+  ctx.save(); ctx.translate(e.x,e.y);
+  if (e.flash>0){ ctx.shadowColor='#ffffff'; ctx.shadowBlur=26; }
+  const col=e.flash>0?'#ffffff':e.col;
+
+  switch(e.type) {
+    case 'INFANTRY':
+      ctx.fillStyle=col;
+      ctx.beginPath(); ctx.arc(0,-sz*0.55,sz*0.38,0,Math.PI*2); ctx.fill();
+      ctx.fillRect(-sz*0.3,-sz*0.25,sz*0.6,sz*0.75);
+      ctx.fillRect(-sz*0.28,sz*0.5,sz*0.24,sz*0.38);
+      ctx.fillRect( sz*0.04,sz*0.5,sz*0.24,sz*0.38);
+      break;
+    case 'BIKE':
+      ctx.fillStyle=col;
+      ctx.beginPath();
+      ctx.moveTo(0,-sz); ctx.lineTo(sz*0.68,0); ctx.lineTo(0,sz); ctx.lineTo(-sz*0.68,0);
+      ctx.closePath(); ctx.fill();
+      if (e.flash<=0) {
+        const ang=Math.atan2(player.y-e.y,player.x-e.x);
+        ctx.strokeStyle=e.col+'55'; ctx.lineWidth=2;
+        for (let k=-1;k<=1;k++) {
+          const a=ang+k*0.28+Math.PI;
+          ctx.beginPath(); ctx.moveTo(Math.cos(a)*sz*1.1,Math.sin(a)*sz*1.1);
+          ctx.lineTo(Math.cos(a)*sz*2.2,Math.sin(a)*sz*2.2); ctx.stroke();
+        }
+      }
+      break;
+    case 'TANK':
+      ctx.fillStyle=e.flash>0?'#fff':'#1f3a1f';
+      ctx.fillRect(-sz,-sz*0.72,sz*2,sz*1.44);
+      ctx.fillStyle=col;
+      ctx.fillRect(-sz*0.72,-sz*0.52,sz*1.44,sz*1.04);
+      ctx.beginPath(); ctx.arc(0,0,sz*0.42,0,Math.PI*2); ctx.fill();
+      ctx.save();
+      ctx.rotate(Math.atan2(player.y-e.y,player.x-e.x));
+      ctx.fillStyle=col;
+      ctx.fillRect(0,-sz*0.12,sz*0.95,sz*0.24);
+      ctx.restore();
+      break;
+    case 'HELI':
+      ctx.fillStyle=col;
+      ctx.beginPath(); ctx.arc(0,0,sz*0.58,0,Math.PI*2); ctx.fill();
+      ctx.fillRect(sz*0.52,-sz*0.12,sz*0.82,sz*0.24);
+      ctx.beginPath(); ctx.arc(sz*1.35,0,sz*0.22,0,Math.PI*2); ctx.fill();
+      const ra=t*9;
+      ctx.strokeStyle=e.flash>0?'#fff':'#ffdd88'; ctx.lineWidth=3;
+      ctx.beginPath(); ctx.moveTo(Math.cos(ra)*sz,Math.sin(ra)*sz);
+      ctx.lineTo(-Math.cos(ra)*sz,-Math.sin(ra)*sz); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(Math.cos(ra+1.57)*sz,Math.sin(ra+1.57)*sz);
+      ctx.lineTo(-Math.cos(ra+1.57)*sz,-Math.sin(ra+1.57)*sz); ctx.stroke();
+      break;
+  }
+
+  // HP bar
+  if (e.hp<e.maxHp) {
+    const bw=sz*2.4;
+    ctx.fillStyle='#2a0808'; ctx.fillRect(-bw/2,sz+5,bw,4);
+    ctx.fillStyle='#ff4444'; ctx.fillRect(-bw/2,sz+5,bw*Math.max(0,e.hp/e.maxHp),4);
+  }
+
+  // Weakness indicator
+  if (e.weakTo===player.mode||player.mode==='MIXED') {
+    ctx.strokeStyle='#ffffff44'; ctx.lineWidth=1.5;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.arc(0,0,sz+8,0,Math.PI*2); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  ctx.shadowBlur=0; ctx.restore();
+}
+
+function drawItem(it) {
+  const col=ITEM_COL[it.type], bob=Math.sin(it.phase)*5;
+  ctx.globalAlpha=Math.min(1,it.life/40);
+  ctx.shadowColor=col; ctx.shadowBlur=18;
+  ctx.fillStyle=col;
+  ctx.beginPath(); ctx.arc(it.x,it.y+bob,11.5,0,Math.PI*2); ctx.fill();
+  ctx.shadowBlur=0; ctx.fillStyle='#000';
+  ctx.font='bold 9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText(ITEM_LABEL[it.type],it.x,it.y+bob);
+  ctx.textBaseline='alphabetic'; ctx.textAlign='left'; ctx.globalAlpha=1;
+}
+
+function drawHUD() {
+  // Top bar（HPとスコアのみ）
+  ctx.fillStyle='rgba(3,6,9,0.88)'; ctx.fillRect(0,0,W,38);
+  ctx.fillStyle='#1a3022'; ctx.fillRect(0,37,W,1);
+
+  // HP bar
+  const hpW=155, hpR=player.hp/player.maxHp;
+  ctx.fillStyle='#151515'; ctx.fillRect(14,10,hpW,17);
+  ctx.fillStyle=hpR>0.5?'#44ff88':hpR>0.25?'#ffaa33':'#ff3333';
+  ctx.fillRect(14,10,hpW*hpR,17);
+  ctx.strokeStyle='#2a4a32'; ctx.lineWidth=1; ctx.strokeRect(14,10,hpW,17);
+  ctx.fillStyle='#fff'; ctx.font='11px monospace';
+  ctx.fillText(`HP  ${Math.ceil(player.hp)} / ${player.maxHp}`,18,22);
+
+  // Mode selector — 左下に大きく配置
+  const modes=[
+    {k:'1',m:'RED',  c:'#ff4444',l:'赤弾'},
+    {k:'2',m:'BLUE', c:'#3399ff',l:'青弾'},
+    {k:'3',m:'GREEN',c:'#33ff77',l:'緑弾'},
+    {k:'M',m:'MIXED',c:'#ffaa33',l:'MIX'},
+  ];
+  const BW=78, BH=46, BGAP=84, BY=H-BH-36;
+  let bx=14;
+  for (const mo of modes) {
+    const active=player.mode===mo.m;
+    // 背景
+    ctx.fillStyle=active?mo.c+'35':'#080c08';
+    ctx.fillRect(bx,BY,BW,BH);
+    // 枠
+    ctx.strokeStyle=active?mo.c:'#223322';
+    ctx.lineWidth=active?2.5:1;
+    ctx.strokeRect(bx,BY,BW,BH);
+    // アクティブは左端に縦ライン
+    if (active) {
+      ctx.fillStyle=mo.c;
+      ctx.fillRect(bx,BY,3,BH);
+      ctx.shadowColor=mo.c; ctx.shadowBlur=14;
+    }
+    // キー番号
+    ctx.fillStyle=active?mo.c+'aa':'#334433';
+    ctx.font='10px monospace';
+    ctx.fillText(`[${mo.k}]`,bx+7,BY+14);
+    // 弾名
+    ctx.fillStyle=active?mo.c:'#445544';
+    ctx.font=(active?'bold ':'')+'16px monospace';
+    ctx.fillText(mo.l,bx+8,BY+35);
+    ctx.shadowBlur=0;
+    bx+=BGAP;
+  }
+
+  // Score
+  ctx.textAlign='center';
+  ctx.fillStyle='#ddff88'; ctx.font='bold 19px monospace';
+  ctx.fillText(score.toString().padStart(6,'0'),W/2,24);
+  ctx.fillStyle='#446644'; ctx.font='10px monospace';
+  ctx.fillText('SCORE',W/2,35);
+  ctx.textAlign='left';
+
+  // Timer
+  const mm=Math.floor(elapsed/60).toString().padStart(2,'0');
+  const ss=Math.floor(elapsed%60).toString().padStart(2,'0');
+  ctx.fillStyle='#aaffcc'; ctx.font='14px monospace';
+  ctx.fillText(`${mm}:${ss}`,W-118,18);
+  // 進化ゲージ
+  const evoProgress = (
+    Math.min(player.bCount, B.MAX_BULLET) / B.MAX_BULLET +
+    Math.min(1, (B.PLAYER_FIRE_RATE - player.fireRate) / (B.PLAYER_FIRE_RATE - B.MAX_FIRE_RATE)) +
+    Math.min(player.spd, B.MAX_SPD) / B.MAX_SPD +
+    Math.min(player.bSz, B.MAX_BSZ) / B.MAX_BSZ
+  ) / 4;
+  ctx.fillStyle='#334a3a'; ctx.fillRect(W-118,22,88,7);
+  const evoCol=['#88ff99','#33ffcc','#ff8833','#ff2200'][player.evoStage];
+  ctx.fillStyle=evoCol; ctx.fillRect(W-118,22,88*evoProgress,7);
+  ctx.strokeStyle='#2a4a32'; ctx.lineWidth=1; ctx.strokeRect(W-118,22,88,7);
+  ctx.fillStyle=evoCol; ctx.font='bold 10px monospace';
+  ctx.fillText(`進化: ${EVO_LABEL[player.evoStage]}`,W-118,36);
+  ctx.fillStyle='#334a3a'; ctx.font='10px monospace';
+  ctx.fillText(`WAVE ${currentWave()+1}`, W-50, 36);
+
+  // Bottom stats bar
+  ctx.fillStyle='rgba(3,6,9,0.9)'; ctx.fillRect(0,H-28,W,28);
+  ctx.fillStyle='#1a3022'; ctx.fillRect(0,H-29,W,1);
+  // News
+  ctx.fillStyle='#ff4444'; ctx.font='bold 11px monospace';
+  ctx.fillText('NEWS▶',8,H-10);
+  ctx.fillStyle='#ffbbbb'; ctx.font='11px monospace';
+  ctx.fillText(NEWS[newsIdx],68,H-10);
+
+  // Mini stats
+  ctx.fillStyle='#33664a'; ctx.font='10px monospace';
+  ctx.textAlign='right';
+  ctx.fillText(`弾:${player.bCount}  ${(1000/player.fireRate).toFixed(1)}Hz  spd:${player.spd.toFixed(1)}`,W-8,H-10);
+  ctx.textAlign='left';
+
+  // Weakness legend (bottom-right corner above news)
+  const lx=W-220, ly=H-42;
+  ctx.fillStyle='rgba(3,6,9,0.7)'; ctx.fillRect(lx,ly,215,12);
+  ctx.fillStyle='#334a3a'; ctx.font='9px monospace';
+  ctx.fillText('赤→緑 強  青→赤 強  緑→青 強   (弱点敵=白枠)',lx+3,ly+9);
+}
+
+function drawTitle(now) {
+  const t=now/1000;
+  ctx.fillStyle='#030609'; ctx.fillRect(0,0,W,H);
+  drawGrid(now);
+
+  ctx.shadowColor='#33ff77'; ctx.shadowBlur=45;
+  ctx.fillStyle='#33ff77';
+  ctx.font=`bold ${Math.min(78,W/11)}px monospace`;
+  ctx.textAlign='center';
+  ctx.fillText('EVOLUTION',W/2,H/2-90);
+
+  ctx.shadowBlur=12; ctx.fillStyle='#88ffcc';
+  ctx.font=`${Math.min(20,W/44)}px monospace`;
+  ctx.fillText('— Not Only Human —',W/2,H/2-48);
+
+  ctx.shadowBlur=0;
+  ctx.fillStyle='#3a5a42'; ctx.font='15px monospace';
+  ctx.fillText('「進化するのは人間共だけではない」',W/2,H/2+5);
+
+  ctx.fillStyle='#223322'; ctx.font='12px monospace';
+  ctx.fillText('移動: WASD / 矢印キー',W/2,H/2+42);
+  ctx.fillText('弾モード: [1]赤弾  [2]青弾  [3]緑弾  [M]ミックス',W/2,H/2+62);
+  ctx.fillStyle='#1a2a1a'; ctx.font='11px monospace';
+  ctx.fillText('赤弾→緑の敵に強い  青弾→赤の敵に強い  緑弾→青の敵に強い',W/2,H/2+82);
+  ctx.fillText('弱点属性でダメージ2.5倍・スコア2倍！',W/2,H/2+98);
+  ctx.fillStyle='#2a4a2a'; ctx.font='11px monospace';
+  ctx.fillText('▶ 完全体に到達せずに終わると…？',W/2,H/2+116);
+
+  if (Math.sin(t*3.5)>0) {
+    ctx.shadowColor='#44ff88'; ctx.shadowBlur=15;
+    ctx.fillStyle='#44ff88'; ctx.font='bold 15px monospace';
+    ctx.fillText('[ SPACE ] または [ クリック ] で開始',W/2,H/2+132);
+    ctx.shadowBlur=0;
+  }
+
+  ctx.textAlign='left';
+  // マウス移動目標マーカー
+  if (mouseTgt && state==='PLAYING') {
+    const pulse=0.5+Math.sin(Date.now()*0.012)*0.5;
+    ctx.globalAlpha=0.35+pulse*0.3;
+    ctx.strokeStyle='#44ff88'; ctx.lineWidth=1.5;
+    ctx.setLineDash([4,4]);
+    ctx.beginPath(); ctx.arc(mouseTgt.x,mouseTgt.y,10,0,Math.PI*2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(mouseTgt.x-14,mouseTgt.y); ctx.lineTo(mouseTgt.x+14,mouseTgt.y);
+    ctx.moveTo(mouseTgt.x,mouseTgt.y-14); ctx.lineTo(mouseTgt.x,mouseTgt.y+14);
+    ctx.stroke();
+    ctx.setLineDash([]); ctx.globalAlpha=1;
+  }
+
+  // Evo flash overlay
+  if (evoFlash>0) {
+    const stage=player.evoStage;
+    ctx.globalAlpha=Math.max(0,evoFlash/90)*0.35;
+    ctx.fillStyle=EVO_FLASH_COL[stage]||'#ffffff';
+    ctx.fillRect(0,0,W,H);
+    ctx.globalAlpha=1;
+    evoFlash--;
+  }
+}
+
+// True End 用の花火パーティクル
+let fireworks=[];
+function launchFirework(x,y) {
+  const cols=['#ffdd00','#ff4488','#44aaff','#44ff88','#ff8844','#ffffff','#cc44ff'];
+  const col=cols[Math.floor(Math.random()*cols.length)];
+  for (let i=0;i<38;i++) {
+    const a=Math.random()*Math.PI*2, s=Math.random()*7+2;
+    fireworks.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,col,life:55+Math.random()*35,maxLife:90,sz:Math.random()*3.5+1.2});
+  }
+  playTone(Math.random()*600+400,'sine',0.06,0.1);
+}
+
+function drawHumanWin(now) {
+  const t=endTimer;
+
+  // 背景：だんだん青空に
+  const skyA=Math.min(1,Math.max(0,(t-100)/120));
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  if (skyA>0) {
+    const sky=ctx.createLinearGradient(0,0,0,H);
+    sky.addColorStop(0,`rgba(30,80,200,${skyA})`);
+    sky.addColorStop(1,`rgba(10,30,80,${skyA})`);
+    ctx.fillStyle=sky; ctx.fillRect(0,0,W,H);
+  }
+
+  // ミサイル突入フェーズ
+  if (t<75) {
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+    const prog=t/75;
+    const mx2=W/2, my2=-60+prog*(H/2+60);
+    // 炎の軌跡
+    for (let i=0;i<6;i++) {
+      const oy=my2+i*18+Math.random()*8;
+      ctx.fillStyle=`rgba(255,${160-i*20},0,${0.7-i*0.1})`;
+      ctx.beginPath(); ctx.arc(mx2+Math.sin(t*0.9+i)*3, oy, 5-i*0.5, 0,Math.PI*2); ctx.fill();
+    }
+    ctx.fillStyle='#cccccc';
+    ctx.save(); ctx.translate(mx2,my2);
+    ctx.fillRect(-6,0,12,32);
+    ctx.fillStyle='#ff4444';
+    ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo(6,0); ctx.lineTo(0,-20); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // サイレン的点滅
+    if (Math.floor(t/6)%2===0) {
+      ctx.fillStyle='rgba(255,50,0,0.07)'; ctx.fillRect(0,0,W,H);
+    }
+
+  // 爆発フラッシュ
+  } else if (t<130) {
+    const ph=t-75;
+    const flashA=Math.max(0,1-ph/55);
+    ctx.fillStyle=`rgba(255,240,200,${flashA})`; ctx.fillRect(0,0,W,H);
+    if (t===75) {
+      playNoise(0.35,0.4,600);
+      for (let i=0;i<5;i++) setTimeout(()=>launchFirework(W/2+Math.random()*200-100,H/2+Math.random()*150-75),i*60);
+    }
+    // 爆発リング
+    const ring=(ph/55)*180;
+    ctx.strokeStyle=`rgba(255,180,80,${flashA*0.6})`; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.arc(W/2,H/2,ring,0,Math.PI*2); ctx.stroke();
+
+  // TRUE END 本編
+  } else {
+    const ph=t-130;
+
+    // 花火を定期発射
+    if (ph>0 && ph%22===0) {
+      launchFirework(Math.random()*W*0.8+W*0.1, Math.random()*H*0.6+H*0.05);
+    }
+
+    // 花火描画
+    for (let i=fireworks.length-1;i>=0;i--) {
+      const fw=fireworks[i];
+      fw.x+=fw.vx; fw.y+=fw.vy; fw.vy+=0.12; fw.vx*=0.97; fw.life--;
+      ctx.globalAlpha=Math.max(0,fw.life/fw.maxLife);
+      ctx.shadowColor=fw.col; ctx.shadowBlur=8;
+      ctx.fillStyle=fw.col;
+      ctx.beginPath(); ctx.arc(fw.x,fw.y,fw.sz,0,Math.PI*2); ctx.fill();
+      if (fw.life<=0) fireworks.splice(i,1);
+    }
+    ctx.globalAlpha=1; ctx.shadowBlur=0;
+
+    ctx.textAlign='center';
+
+    // TRUE END バナー
+    if (ph>20) {
+      // 背景プレート
+      const bh=110, by=H/2-145;
+      const grad=ctx.createLinearGradient(0,by,W,by+bh);
+      grad.addColorStop(0,'rgba(255,220,0,0.18)');
+      grad.addColorStop(0.5,'rgba(255,255,255,0.22)');
+      grad.addColorStop(1,'rgba(255,180,0,0.18)');
+      ctx.fillStyle=grad; ctx.fillRect(0,by,W,bh);
+
+      // TRUE END テキスト
+      const pulse=1+Math.sin(ph*0.09)*0.04;
+      ctx.save(); ctx.translate(W/2,H/2-110); ctx.scale(pulse,pulse);
+      ctx.shadowColor='#ffdd00'; ctx.shadowBlur=50;
+      ctx.fillStyle='#ffee44';
+      ctx.font=`bold ${Math.min(22,W/45)}px monospace`;
+      ctx.fillText('★  T R U E   E N D  ★',0,0);
+      ctx.shadowBlur=0; ctx.restore();
+
+      ctx.shadowColor='#ffffff'; ctx.shadowBlur=28;
+      ctx.fillStyle='#ffffff';
+      ctx.font=`bold ${Math.min(52,W/12)}px monospace`;
+      ctx.fillText('人類は平和を',W/2, H/2-60);
+      ctx.fillText('取り戻した。',W/2, H/2+5);
+      ctx.shadowBlur=0;
+    }
+
+    if (ph>90) {
+      ctx.fillStyle='#aaddff'; ctx.font='17px monospace';
+      ctx.fillText('未確認生命体は完全に排除された。', W/2, H/2+62);
+    }
+    if (ph>155) {
+      ctx.fillStyle='#ffdd88'; ctx.font='bold 14px monospace';
+      ctx.fillText('おめでとう！　完全体には至らなかった！', W/2, H/2+96);
+    }
+    if (ph>210) {
+      ctx.fillStyle='#88bbff'; ctx.font='14px monospace';
+      const mm2=Math.floor(elapsed/60).toString().padStart(2,'0');
+      const ss2=Math.floor(elapsed%60).toString().padStart(2,'0');
+      ctx.fillText(`到達進化段階: ${EVO_LABEL[player.evoStage]}  /  生存時間: ${mm2}:${ss2}`, W/2, H/2+128);
+      ctx.fillText(`FINAL SCORE: ${score}`, W/2, H/2+152);
+    }
+    if (ph>290 && Math.sin(ph*0.1)>0) {
+      ctx.fillStyle='#445566'; ctx.font='12px monospace';
+      ctx.fillText('[ SPACE ] でタイトルへ', W/2, H/2+192);
+    }
+    ctx.textAlign='left'; ctx.shadowBlur=0;
+
+    if (ph>780) { state='TITLE'; fireworks=[]; }
+  }
+}
+
+const ELEGY = [
+  'それでも、生きようとしていた。',
+  '進化の途中で、散った。',
+  'お前は最後まで戦った。',
+  '人類には、まだ早すぎた。',
+  '次の進化は、きっと——',
+];
+function drawGameOver() {
+  const t=endTimer;
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+
+  // 暗い緑のグリッド、消えていく
+  ctx.globalAlpha=Math.max(0,0.06-t*0.0003);
+  drawGrid(lastTime);
+  ctx.globalAlpha=1;
+
+  // 段階的にテキストが浮かぶ
+  ctx.textAlign='center';
+
+  // --- フェーズ1: 倒れていく演出 (0〜60)
+  if (t<60) {
+    const a=t/60;
+    // プレイヤーの残像がゆっくり消える
+    const col=['#44ff88','#33ffcc','#22ffaa','#11ff55'][player.evoStage];
+    ctx.globalAlpha=(1-a)*0.7;
+    ctx.shadowColor=col; ctx.shadowBlur=30*( 1-a);
+    ctx.fillStyle=col;
+    const sz=(14+player.evoStage*4.5)*(1+a*0.5);
+    ctx.beginPath(); ctx.arc(W/2,H/2,sz,0,Math.PI*2); ctx.fill();
+    // 崩れるパーティクル
+    if (t%3===0) spawnParticles(W/2+Math.random()*60-30,H/2+Math.random()*60-30,2,col);
+    ctx.globalAlpha=1; ctx.shadowBlur=0;
+  }
+
+  // --- フェーズ2: 弔いテキスト (60〜)
+  if (t>60) {
+    const ph=t-60;
+    const fadeIn=Math.min(1,ph/40);
+
+    // 進化段階のシルエット（暗い）
+    ctx.globalAlpha=0.12;
+    ctx.fillStyle='#44ff88';
+    ctx.beginPath(); ctx.arc(W/2,H/2+20,50+player.evoStage*14,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha=1;
+
+    // メインメッセージ
+    if (ph>10) {
+      ctx.globalAlpha=Math.min(1,(ph-10)/35);
+      ctx.shadowColor='#33ff77'; ctx.shadowBlur=18;
+      ctx.fillStyle='#55bb77';
+      ctx.font=`${Math.min(14,W/80)}px monospace`;
+      ctx.fillText('— R E Q U I E M —',W/2,H/2-130);
+      ctx.shadowBlur=0; ctx.globalAlpha=1;
+    }
+    if (ph>55) {
+      ctx.globalAlpha=Math.min(1,(ph-55)/45);
+      ctx.shadowColor='#22ff66'; ctx.shadowBlur=22;
+      ctx.fillStyle='#aaffcc';
+      ctx.font=`bold ${Math.min(34,W/22)}px monospace`;
+      ctx.fillText('進化、途絶える。',W/2,H/2-72);
+      ctx.shadowBlur=0; ctx.globalAlpha=1;
+    }
+
+    // 弔いの言葉（ランダム）
+    if (ph>110) {
+      ctx.globalAlpha=Math.min(1,(ph-110)/50);
+      ctx.fillStyle='#557755';
+      ctx.font=`${Math.min(18,W/55)}px monospace`;
+      const msg=ELEGY[Math.floor(score/100+player.evoStage)%ELEGY.length];
+      ctx.fillText(msg,W/2,H/2-20);
+      ctx.globalAlpha=1;
+    }
+
+    // スタッツ
+    if (ph>175) {
+      ctx.globalAlpha=Math.min(1,(ph-175)/40);
+      const mm2=Math.floor(elapsed/60).toString().padStart(2,'0');
+      const ss2=Math.floor(elapsed%60).toString().padStart(2,'0');
+      ctx.fillStyle='#334a3a'; ctx.font='13px monospace';
+      ctx.fillText(`進化段階: ${EVO_LABEL[player.evoStage]}　生存時間: ${mm2}:${ss2}`,W/2,H/2+55);
+      ctx.fillText(`SCORE: ${score}`,W/2,H/2+80);
+      ctx.globalAlpha=1;
+    }
+
+    // 進化ゲージ（未達成分を表示）
+    if (ph>230) {
+      ctx.globalAlpha=Math.min(1,(ph-230)/40);
+      const gw=200;
+      const evoProgress=(
+        Math.min(player.bCount, B.MAX_BULLET) / B.MAX_BULLET +
+        Math.min(1, (B.PLAYER_FIRE_RATE - player.fireRate) / (B.PLAYER_FIRE_RATE - B.MAX_FIRE_RATE)) +
+        Math.min(player.spd, B.MAX_SPD) / B.MAX_SPD +
+        Math.min(player.bSz, B.MAX_BSZ) / B.MAX_BSZ
+      )/4;
+      ctx.fillStyle='#1a2a1a'; ctx.fillRect(W/2-gw/2,H/2+102,gw,8);
+      ctx.fillStyle='#33664a'; ctx.fillRect(W/2-gw/2,H/2+102,gw*evoProgress,8);
+      ctx.strokeStyle='#2a4a32'; ctx.lineWidth=1; ctx.strokeRect(W/2-gw/2,H/2+102,gw,8);
+      ctx.fillStyle='#334a3a'; ctx.font='10px monospace';
+      ctx.fillText(`完全体まで ${Math.round((1-evoProgress)*100)}% 足りなかった`,W/2,H/2+122);
+      ctx.globalAlpha=1;
+    }
+
+    // タイトルへ
+    if (ph>310 && Math.sin(ph*0.09)>0) {
+      ctx.fillStyle='#223322'; ctx.font='12px monospace';
+      ctx.fillText('[ SPACE ] で再挑戦',W/2,H/2+158);
+    }
+  }
+  ctx.textAlign='left'; ctx.shadowBlur=0; ctx.globalAlpha=1;
+}
+
+function drawEnding(now) {
+  const t=endTimer;
+  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  drawParticles();
+
+  if (t<120) {
+    // Nuclear alarm
+    if (Math.floor(t/8)%2===0){ ctx.fillStyle='rgba(255,0,0,0.22)'; ctx.fillRect(0,0,W,H); }
+    ctx.shadowColor='#ff3333'; ctx.shadowBlur=32;
+    ctx.fillStyle='#ff3333';
+    ctx.font=`bold ${Math.min(42,W/20)}px monospace`;
+    ctx.textAlign='center';
+    const sec=Math.ceil((120-t)/60);
+    ctx.fillText(`⚠  核攻撃まで ${sec} 秒  ⚠`,W/2,H/2-18);
+    ctx.shadowBlur=0; ctx.fillStyle='#ff6666'; ctx.font='16px monospace';
+    ctx.fillText('政府は最終手段を選んだ',W/2,H/2+28);
+    if (t===1) playNoise(1.5,0.4,200);
+
+  } else if (t<200) {
+    // White flash
+    const a=Math.min(1,(t-120)/80);
+    ctx.fillStyle=`rgba(255,255,255,${a})`; ctx.fillRect(0,0,W,H);
+
+  } else if (t<390) {
+    const ph=t-200;
+    // Black fade-in
+    ctx.fillStyle=`rgba(0,0,0,${Math.min(1,ph/30)})`; ctx.fillRect(0,0,W,H);
+    ctx.shadowBlur=0; ctx.textAlign='center';
+    if (ph>25) { ctx.fillStyle='#777'; ctx.font='18px monospace'; ctx.fillText('人類は最後の手段を選んだ。',W/2,H/2-90); }
+    if (ph>80) {
+      // Creature shadow
+      ctx.fillStyle='#151515';
+      ctx.beginPath(); ctx.ellipse(W/2,H/2+68,80,24,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#080808';
+      ctx.beginPath(); ctx.arc(W/2,H/2,32,0,Math.PI*2); ctx.fill();
+      for (let i=0;i<8;i++) {
+        const a=(i/8)*Math.PI*2+ph*0.012;
+        ctx.beginPath(); ctx.arc(W/2+Math.cos(a)*50,H/2+Math.sin(a)*50,9,0,Math.PI*2); ctx.fill();
+      }
+    }
+    if (ph>145) {
+      // Screen cracks
+      ctx.strokeStyle='#ffffff44'; ctx.lineWidth=2;
+      const cracks=[
+        [[0,-1],[0.22,-0.5],[-0.12,-0.22],[0.28,0.1]],
+        [[0.9,0.28],[0.45,0.1],[0.75,-0.18]],
+        [[-0.65,0.45],[-0.28,0.18],[-0.48,-0.1]],
+        [[0.1,0.95],[-0.12,0.48],[0.18,0.7]],
+      ];
+      for (const crack of cracks) {
+        ctx.beginPath(); ctx.moveTo(W/2,H/2);
+        let cx=W/2,cy=H/2;
+        for (const [dx2,dy2] of crack) { cx+=dx2*200; cy+=dy2*200; ctx.lineTo(cx,cy); }
+        ctx.stroke();
+      }
+    }
+    if (ph>195) {
+      ctx.shadowColor='#33ff77'; ctx.shadowBlur=28;
+      ctx.fillStyle='#33ff77';
+      ctx.font=`bold ${Math.min(30,W/28)}px monospace`;
+      ctx.fillText('進化は、止まらない。',W/2,H/2+138);
+      ctx.shadowBlur=0;
+    }
+
+  } else if (t<830) {
+    const ph=t-390;
+    ctx.fillStyle=`rgba(0,0,0,${Math.min(1,ph/35)})`; ctx.fillRect(0,0,W,H);
+    if (ph>35) {
+      ctx.textAlign='center';
+      ctx.shadowColor='#33ff77'; ctx.shadowBlur=42;
+      ctx.fillStyle='#33ff77';
+      ctx.font=`bold ${Math.min(82,W/10)}px monospace`;
+      ctx.fillText('BAD END',W/2,H/2-28);
+      ctx.shadowBlur=0; ctx.fillStyle='#55aa77'; ctx.font='20px monospace';
+      ctx.fillText(`FINAL SCORE: ${score}`,W/2,H/2+44);
+      ctx.fillStyle='#334a3a'; ctx.font='14px monospace';
+      const mm=Math.floor(elapsed/60).toString().padStart(2,'0');
+      const ss=Math.floor(elapsed%60).toString().padStart(2,'0');
+      ctx.fillText(`生存時間: ${mm}:${ss}  最終進化: ${EVO_LABEL[player.evoStage]}`,W/2,H/2+76);
+      ctx.fillStyle='#1a2a1a'; ctx.font='12px monospace';
+      ctx.fillText('[ SPACE ] / [ クリック ] でタイトルへ',W/2,H/2+105);
+    }
+  } else {
+    state='TITLE';
+  }
+  ctx.textAlign='left'; ctx.shadowBlur=0;
+}
+
+// ─────────────────────── MAIN LOOP ───────────────────────
+
+function loop(now) {
+  const dt=Math.min(now-lastTime,50);
+  lastTime=now;
+  if      (state==='PLAYING')  updatePlaying(now,dt);
+  else if (state==='ENDING')   updateEnding();
+  else if (state==='HUMANWIN') updateEnding();
+  else if (state==='GAMEOVER')  { if(++endTimer>780) state='TITLE'; }
+  render(now);
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+</script>
+</body>
+</html>
