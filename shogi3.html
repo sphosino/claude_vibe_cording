@@ -167,6 +167,21 @@ const canvas=document.getElementById('c');
 const ctx=canvas.getContext('2d');
 canvas.width=CW; canvas.height=CH;
 
+
+// ── AI チューニング定数 ──
+const AI_SEARCH_DEPTH   = 3;      // ミニマックス探索深さ
+const AI_MOVE_CANDIDATES = 5;     // 各ノードで展開する候補手数
+const AI_CAP_BONUS_MULT  = 2;     // 取り手の評価ボーナス倍率
+const AI_PROXIMITY_MULT  = 15;    // 王への駒接近ボーナス係数
+const AI_ENTRY_MULT      = 50;    // 入玉距離ボーナス係数
+const AI_ESCAPE_MULT     = 100;   // 王の逃げ場評価係数
+const AI_HANG_PENALTY    = 1.0;   // タダ捨てペナルティ係数（駒価値×この値）
+const AI_ELIM_PIECE_RATE = 0.5;   // 脱落駒の評価割合
+const AI_HAND_BONUS_RATE = 1.1;   // 持ち駒の価値倍率
+const AI_SCORE_TRYWIN    = 1800000;  // 勝利手スコア（CPU最大化）
+const AI_SCORE_TRYLOSE   = -1500000; // 敗北手スコア（CPU最小化）
+const AI_DELAY_MS        = 400;   // AI思考後の待機時間(ms)
+const AI_SKIP_DELAY_MS   = 800;   // スキップ時の待機時間(ms)
 const PV  ={FU:100,KY:300,KE:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:99999};
 const PVP ={FU:200,KY:200,KE:200,GIN:50,KAKU:500,HI:450};
 const PC  ={FU:'歩',KY:'香',KE:'桂',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
@@ -275,7 +290,7 @@ function init(){
   setStatus(pName(humanPlayer)+'の番です');
   render();
   // 人間がP0以外のとき、最初のAIターンをキック
-  if(humanPlayer!==0) setTimeout(()=>kickAI(),300);
+  if(humanPlayer!==0) setTimeout(()=>kickAI(),AI_DELAY_MS);
 }
 
 function setView(vp){ viewPlayer=vp; render(); }
@@ -288,7 +303,7 @@ function kickAI(){
     if(_g!==gameGen||gover) return;
     const mv=aiMove(turn,board,hand,eliminated);
     if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
-  },400);
+  },AI_DELAY_MS);
 }
 function setHumanPlayer(p){
   humanPlayer=p; ENEMY=p; viewPlayer=p;
@@ -701,7 +716,7 @@ function pieceScores(b, h, owners) {
     if (h[o]) {
       h[o].forEach(p => {
         // 持ち駒は盤上より価値より高い
-        scoresMap[o] += (PV[p] || 0) * 1.1;
+        scoresMap[o] += (PV[p] || 0) * AI_HAND_BONUS_RATE;
       });
     }
   });
@@ -733,14 +748,14 @@ function evalStatic(b, h, elim){
       for(let r=0;r<9;r++) for(let c=0;c<9;c++){
         const cell=b[r][c];
         if(cell?.o===c1&&cell?.p!=='OU'){
-          score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*15;
+          score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*AI_PROXIMITY_MULT;
         }
       }
     }
 
     // 王の逃げ場: c1は多い方がいい、c2は少ない方がいい
-    score -= (8 - kingEscapesOn(b,c1)) * 100; // c1の逃げ場が少ないとマイナス
-    score += (8 - kingEscapesOn(b,c2)) * 100; // c2の逃げ場が少ないとプラス
+    score -= (8 - kingEscapesOn(b,c1)) * AI_ESCAPE_MULT; // c1の逃げ場が少ないとマイナス
+    score += (8 - kingEscapesOn(b,c2)) * AI_ESCAPE_MULT; // c2の逃げ場が少ないとプラス
 
     // c2の駒がc1の王を狙っていたらペナルティ
     const [ck1r,ck1c] = findKingOn(b,c1);
@@ -748,16 +763,16 @@ function evalStatic(b, h, elim){
       for(let r=0;r<9;r++) for(let c=0;c<9;c++){
         const cell=b[r][c];
         if(cell?.o===c2&&cell?.p!=='OU'){
-          score -= Math.max(0,(8-Math.abs(r-ck1r)-Math.abs(c-ck1c)))*15;
+          score -= Math.max(0,(8-Math.abs(r-ck1r)-Math.abs(c-ck1c)))*AI_PROXIMITY_MULT;
         }
       }
     }
 
     // 入玉距離（c1視点）
     if(ck1r>=0){
-      if(c1===1) score+=(ck1r-4)*50;
-      else if(c1===2) score+=(4-ck1c)*50;
-      else score+=(4-ck1r)*50;
+      if(c1===1) score+=(ck1r-4)*AI_ENTRY_MULT;
+      else if(c1===2) score+=(4-ck1c)*AI_ENTRY_MULT;
+      else score+=(4-ck1r)*AI_ENTRY_MULT;
     }
     return score;
 
@@ -775,7 +790,7 @@ function evalStatic(b, h, elim){
       let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
       if(cell.o===hu) huTotal+=v;
       else if(!elim[cell.o]) cpuTotal+=v;
-      else cpuTotal+=v*0.5; // 脱落駒は拾えばCPUの得→0.5倍で計上（拾うと手駒で1.0倍になり得）
+      else cpuTotal+=v*AI_ELIM_PIECE_RATE; // 脱落駒は拾えばCPUの得→0.5倍で計上（拾うと手駒で1.0倍になり得）
     }
     // 手駒（CPU同士で取り合っても合計は変わらないよう1.0倍）
     [0,1,2].forEach(o=>{
@@ -790,9 +805,9 @@ function evalStatic(b, h, elim){
       [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
         const [ckr,ckc] = findKingOn(b, cpu);
         if(ckr>=0){
-          if(cpu===1) score+=(ckr-4)*50;
-          else if(cpu===2) score+=(4-ckc)*50;
-          else score+=(4-ckr)*50;
+          if(cpu===1) score+=(ckr-4)*AI_ENTRY_MULT;
+          else if(cpu===2) score+=(4-ckc)*AI_ENTRY_MULT;
+          else score+=(4-ckr)*AI_ENTRY_MULT;
         }
       });
     }
@@ -811,7 +826,7 @@ function evalStatic(b, h, elim){
         if(huAttacked.has(r+','+c)){
           // この駒は人間に取られる可能性がある → 価値をマイナス評価
           let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
-          score -= v;
+          score -= v * AI_HANG_PENALTY;
         }
       }
     });
@@ -931,11 +946,11 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
   moves.sort((a,b)=>{
     const {b:ba,h:ha,elim:ea}=simApply(bd,hd,elim,a,turnPlayer);
     const {b:bb,h:hb,elim:eb}=simApply(bd,hd,elim,b,turnPlayer);
-    const capBonusA = (!a.drop&&bd[a.tr]?.[a.tc]) ? (PV[bd[a.tr][a.tc].p]||0)*2 : 0;
-    const capBonusB = (!b.drop&&bd[b.tr]?.[b.tc]) ? (PV[bd[b.tr][b.tc].p]||0)*2 : 0;
+    const capBonusA = (!a.drop&&bd[a.tr]?.[a.tc]) ? (PV[bd[a.tr][a.tc].p]||0)*AI_CAP_BONUS_MULT : 0;
+    const capBonusB = (!b.drop&&bd[b.tr]?.[b.tc]) ? (PV[bd[b.tr][b.tc].p]||0)*AI_CAP_BONUS_MULT : 0;
     return (evalStatic(bb,hb,eb)+capBonusB) - (evalStatic(ba,ha,ea)+capBonusA);
   });
-  moves = moves.slice(0, 5);
+  moves = moves.slice(0, AI_MOVE_CANDIDATES);
 
 
   //各候補手に再帰
@@ -943,7 +958,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     let best = Infinity;
     for(const mv of moves){
       const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-      if(tryWin) return -1500000;
+      if(tryWin) return AI_SCORE_TRYLOSE;
       const nxtH = nextAliveOn(newElim, turnPlayer); // ②修正: newElimから計算
       const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxtH, 0);
       best = Math.min(best, score);
@@ -956,7 +971,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     
     for(const mv of moves){
       const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-      if(tryWin) return 1800000;
+      if(tryWin) return AI_SCORE_TRYWIN;
       const nxt2 = nextAliveOn(newElim, turnPlayer);
       const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, 0);
       best = Math.max(best, score);
@@ -1035,7 +1050,7 @@ function aiMove(o,bd,hd,elim){
     if(tryWin) return mv;
     const nxt = nextAliveOn(newElim, o);
     const aliveNow = newElim.filter(e=>!e).length;
-    const searchDepth = 3;
+    const searchDepth = AI_SEARCH_DEPTH;
     const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt);
     
     if(v>bestScore){bestScore=v;best=mv;}
@@ -1065,7 +1080,7 @@ function nextTurn(bd) {
       setTimeout(() => {
         if (_sg !== gameGen || gover) return;
         nextTurn(bd);
-      }, 800);
+      }, AI_SKIP_DELAY_MS);
     } else {
       setStatus(PNAME[humanPlayer] + 'の番です');
     }
@@ -1452,6 +1467,7 @@ function drawPromoDialog(){
 }
 
 init();
+setHumanPlayer(0);
 </script>
 </body>
 </html>
