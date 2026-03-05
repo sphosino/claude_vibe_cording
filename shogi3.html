@@ -169,8 +169,9 @@ canvas.width=CW; canvas.height=CH;
 
 
 // ── AI チューニング定数 ──
-const AI_SEARCH_DEPTH   = 3;      // ミニマックス探索深さ
-const AI_MOVE_CANDIDATES = 5;     // 各ノードで展開する候補手数
+const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+const AI_SEARCH_DEPTH    = IS_MOBILE ? 2 : 3;  // モバイルは深さ2に抑える
+const AI_MOVE_CANDIDATES = IS_MOBILE ? 4 : 5;  // モバイルは候補4手
 const AI_CAP_BONUS_MULT  = 2;     // 取り手の評価ボーナス倍率
 const AI_PROXIMITY_MULT  = 15;    // 王への駒接近ボーナス係数
 const AI_ENTRY_MULT      = 50;    // 入玉距離ボーナス係数
