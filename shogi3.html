@@ -315,6 +315,7 @@ function setHumanPlayer(p){
     if(btn) btn.style.background=i===p?'#6a3500':'#3a1500';
   });
   init();
+}
 
 // モバイル対応: canvasを画面幅に合わせてscale
 function fitCanvas(){
@@ -325,8 +326,6 @@ function fitCanvas(){
 window.addEventListener('resize', fitCanvas);
 if(document.readyState==='complete') fitCanvas();
 else window.addEventListener('load', fitCanvas);
-
-}
 
 function setStatus(msg){document.getElementById('info').textContent=msg;}
 function pName(o){ return o===humanPlayer?'あなた':PNAME_BASE[o]; }
