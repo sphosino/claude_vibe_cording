@@ -121,19 +121,19 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
 /* 難易度UIバー */
 #diffRow {
   margin-top: 8px;
+  width: 100%;
   display: flex;
-  gap: 5px;
-  flex-wrap: wrap;
-  justify-content: center;
-  align-items: center;
+  flex-direction: column;
+  gap: 8px;
   background: rgba(20,8,0,0.55);
   border: 1px solid #503010;
   border-radius: 6px;
-  padding: 8px 14px;
+  padding: 10px 14px;
 }
 #diffRow button {
-  padding: 5px 11px;
+  padding: 8px 12px;
   font-size: 13px;
+  min-height: 36px;
   background: #2a1200;
   color: #c0a060;
   border: 1px solid #804010;
@@ -143,6 +143,15 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
   letter-spacing: 0.5px;
 }
 #diffRow button:hover { background: #4a2500; color: #ffe090; }
+
+/* スマホ向け細かい調整 */
+@media (max-width: 480px) {
+  #info { font-size: 15px; letter-spacing: 1px; }
+  #btnRow button { padding: 10px 10px; font-size: 13px; }
+  #diffRow button { padding: 10px 10px; min-height: 40px; font-size: 13px; }
+  #diffRow { padding: 10px; }
+  #col-desc { font-size: 13px !important; }
+}
 </style>
 </head>
 <body>
@@ -176,17 +185,23 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
       <button onclick="setView(viewPlayer===2?0:viewPlayer+1)">👁 視点切替</button>
     </div>
     <div id="diffRow">
-      <span id="diff-label" style="color:#ffaa44;font-size:13px;letter-spacing:1px;">⚔️ 難易度: 中級</span>
-      <button id="diff-beginner" onclick="setDifficulty('beginner')">🌱 入門</button>
-      <button id="diff-easy"     onclick="setDifficulty('easy')">🌿 初級</button>
-      <button id="diff-normal"   onclick="setDifficulty('normal')">⚔️ 中級</button>
-      <button id="diff-hard"     onclick="setDifficulty('hard')">🔥 上級</button>
-      <span style="color:#604020;margin:0 4px;">│</span>
-      <span style="display:inline-flex;align-items:center;gap:5px;flex-wrap:nowrap;">
-        <span id="col-label" style="color:#ffaa44;font-size:13px;letter-spacing:1px;">🤝 共闘: ON</span>
-        <button id="col-on"  onclick="setCpuCollusion(true)">🤝 共闘</button>
-        <button id="col-off" onclick="setCpuCollusion(false)">⚔ 三つ巴</button>
-      </span>
+      <!-- 難易度行 -->
+      <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:center;width:100%;">
+        <span id="diff-label" style="color:#ffaa44;font-size:13px;letter-spacing:1px;">⚔️ 難易度: 中級</span>
+        <button id="diff-beginner" onclick="setDifficulty('beginner')">🌱 入門</button>
+        <button id="diff-easy"     onclick="setDifficulty('easy')">🌿 初級</button>
+        <button id="diff-normal"   onclick="setDifficulty('normal')">⚔️ 中級</button>
+        <button id="diff-hard"     onclick="setDifficulty('hard')">🔥 上級</button>
+      </div>
+      <!-- 共闘設定行 -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;border-top:1px solid #503010;padding-top:8px;margin-top:4px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;">
+          <span style="color:#ffaa44;font-size:13px;letter-spacing:1px;">CPU同士の関係：</span>
+          <button id="col-on"  onclick="setCpuCollusion(true)">🤝 共闘</button>
+          <button id="col-off" onclick="setCpuCollusion(false)">⚔ 三つ巴</button>
+        </div>
+        <div id="col-desc" style="font-size:12px;color:#b09070;text-align:center;min-height:16px;"></div>
+      </div>
     </div>
     <div id="kifu-panel">
       <div id="kifu-header">📜 棋譜</div>
@@ -1497,7 +1512,7 @@ function setCpuCollusion(val){
   cpuCollusion = val;
   const onBtn  = document.getElementById('col-on');
   const offBtn = document.getElementById('col-off');
-  const lbl    = document.getElementById('col-label');
+  const desc   = document.getElementById('col-desc');
   if(onBtn){
     onBtn.style.background  = val  ? '#7a3a00' : '#2a1200';
     onBtn.style.border      = val  ? '1px solid #ffaa44' : '1px solid #804010';
@@ -1510,7 +1525,11 @@ function setCpuCollusion(val){
     offBtn.style.color      = !val ? '#aaddff' : '#c0a060';
     offBtn.style.boxShadow  = !val ? '0 0 10px rgba(50,150,255,0.4)' : 'none';
   }
-  if(lbl) lbl.textContent = val ? '🤝 共闘: ON' : '⚔ 三つ巴: ON';
+  if(desc){
+    desc.innerHTML = val
+      ? '🤝 <span style="color:#ff4433">CPU①</span>・<span style="color:#33bb55">CPU②</span>が連携してプレイヤーを集中攻撃します'
+      : '⚔ <span style="color:#ff4433">CPU①</span>・<span style="color:#33bb55">CPU②</span>もそれぞれ自分の勝利を目指す完全三つ巴戦です';
+  }
   // ルール説明の警告文も更新
   const warn = document.getElementById('collusion-warning');
   if(warn){
