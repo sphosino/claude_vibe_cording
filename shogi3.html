@@ -657,7 +657,7 @@ function pieceScores(b, h, owners) {
 // ・人間脱落後: CPU①の視点で①有利 = 高スコア
 function evalStatic(b, h, elim){
   elim = elim || eliminated;
-  const humanIsElim = elim[humanPlayer];
+  const humanIsElim = humanEliminated; // isHumanと統一：グローバルで判定
   const pieceScore = pieceScores(b,h,[0,1,2])
     // CPU対CPU: 生きてるCPUを特定
   const cpus = [0,1,2].filter(o=>!elim[o]);
@@ -667,7 +667,7 @@ function evalStatic(b, h, elim){
   if(humanIsElim){
 
     const c1=cpus[0], c2=cpus[1];
-    let score = pieceScore[c1]-pieceScore[c2]
+    let score = pieceScore[c1]-pieceScore[c2];
 
     // c1の駒がc2の王に近いほど有利
     const [k2r,k2c] = findKingOn(b,c2);
@@ -680,8 +680,18 @@ function evalStatic(b, h, elim){
       }
     }
 
-    // 入玉距離
+    // c2の駒がc1の王を狙っていたらペナルティ
     const [ck1r,ck1c] = findKingOn(b,c1);
+    if(ck1r>=0){
+      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+        const cell=b[r][c];
+        if(cell?.o===c2&&cell?.p!=='OU'){
+          score -= Math.max(0,(8-Math.abs(r-ck1r)-Math.abs(c-ck1c)))*15;
+        }
+      }
+    }
+
+    // 入玉距離（c1視点）
     if(ck1r>=0){
       if(c1===1) score+=(ck1r-4)*50;
       else if(c1===2) score+=(4-ck1c)*50;
@@ -691,18 +701,31 @@ function evalStatic(b, h, elim){
 
   } else {
     // 通常: CPU連合 vs 人間
+    // CPU同士の駒のやりとりはスコアに影響させない
+    // → 盤上+手駒を「誰が持っているか関係なく」CPU側/人間側で合算
     const hu = humanPlayer;
-    let score = cpus.reduce((s,o)=>s+pieceScore[o],0) - pieceScore[hu];
+    let cpuTotal = 0;
+    let huTotal = 0;
+
+    // 盤上
+    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+      const cell=b[r][c]; if(!cell) continue;
+      let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
+      if(cell.o===hu) huTotal+=v;
+      else if(!elim[cell.o]) cpuTotal+=v;
+      else cpuTotal+=v*0.5; // 脱落駒は拾えばCPUの得→0.5倍で計上（拾うと手駒で1.0倍になり得）
+    }
+    // 手駒（CPU同士で取り合っても合計は変わらないよう1.0倍）
+    [0,1,2].forEach(o=>{
+      if(o===hu){ h[o].forEach(p=>huTotal+=(PV[p]||0)); }
+      else if(!elim[o]){ h[o].forEach(p=>cpuTotal+=(PV[p]||0)); }
+    });
+
+    let score = cpuTotal - huTotal;
 
     const [kr,kc] = findKingOn(b, hu);
     if(kr >= 0){
       [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
-        for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-          const cell=b[r][c];
-          if(cell?.o===cpu&&cell?.p!=='OU'){
-            score += Math.max(0,(8-Math.abs(r-kr)-Math.abs(c-kc)))*4;
-          }
-        }
         const [ckr,ckc] = findKingOn(b, cpu);
         if(ckr>=0){
           if(cpu===1) score+=(ckr-4)*50;
@@ -711,6 +734,25 @@ function evalStatic(b, h, elim){
         }
       });
     }
+
+    // 人間に即取られるCPUの駒はその駒価値分をマイナス（タダ捨てペナルティ）
+    // 人間の利きマスを計算
+    const huAttacked=new Set();
+    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+      if(b[r][c]?.o!==hu) continue;
+      rawMoves(b,r,c).forEach(([dr,dc])=>huAttacked.add(dr+','+dc));
+    }
+    [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
+      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+        const cell=b[r][c];
+        if(!cell||cell.o!==cpu) continue;
+        if(huAttacked.has(r+','+c)){
+          // この駒は人間に取られる可能性がある → 価値をマイナス評価
+          let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
+          score -= v;
+        }
+      }
+    });
     return score;
   }
 }
@@ -724,6 +766,9 @@ function allMovesOn(bd,hd,o,elim){
     const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
     const dests=rawMoves(bd,r,c);
     dests.forEach(([tr,tc])=>{
+      // 通常モード時: CPUがチームメイトの駒を取る手は生成しない（人間には適用しない）
+      const target=bd[tr][tc];
+      if(!humanEliminated && o!==humanPlayer && target && target.o!==humanPlayer && !elim[target.o]) return;
       const canPro=!cell.pr&&['FU','KY','KE','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
       const must=mustPromote(cell.p,o,tr,tc);
@@ -807,13 +852,28 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     // 手なし: 次のプレイヤーへ（深さ消費なし、スキップ数+1）
     return minimaxRound(bd, hd, elim, depth, alpha, beta, nxt, skips+1);
   }
-  // 取り手を駒価値でソート → 全部残す
-  // 非取り手は上位12手に絞る
-  const capMoves = moves.filter(m=>!m.drop && bd[m.tr]?.[m.tc]);
-  const nonCap   = moves.filter(m=> m.drop || !bd[m.tr]?.[m.tc]);
-  sortMoves(capMoves, bd); // 取り手: 駒価値順
-  sortMoves(nonCap,   bd); // 非取り手: ソート後に絞る
-  moves = [...capMoves, ...nonCap.slice(0, 12)];
+  // 王手されているか確認
+  const inCheck = kingWouldBeCaptured(bd, hd, turnPlayer, elim);
+
+  // 王手中は回避手のみに絞る
+  if(inCheck){
+    const escapeMoves = moves.filter(mv=>{
+      const {b:nb,h:nh,elim:ne}=simApply(bd,hd,elim,mv,turnPlayer);
+      return !kingWouldBeCaptured(nb,nh,turnPlayer,ne);
+    });
+    if(escapeMoves.length) moves = escapeMoves;
+    // 回避手がない場合はそのまま（詰み）
+  }
+
+  // 取り手に大きなボーナスを乗せてevalStaticでソート → 上位15手を候補に
+  moves.sort((a,b)=>{
+    const {b:ba,h:ha,elim:ea}=simApply(bd,hd,elim,a,turnPlayer);
+    const {b:bb,h:hb,elim:eb}=simApply(bd,hd,elim,b,turnPlayer);
+    const capBonusA = (!a.drop&&bd[a.tr]?.[a.tc]) ? (PV[bd[a.tr][a.tc].p]||0)*2 : 0;
+    const capBonusB = (!b.drop&&bd[b.tr]?.[b.tc]) ? (PV[bd[b.tr][b.tc].p]||0)*2 : 0;
+    return (evalStatic(bb,hb,eb)+capBonusB) - (evalStatic(ba,ha,ea)+capBonusA);
+  });
+  moves = moves.slice(0, 6);
 
 
   //各候補手に再帰
@@ -822,7 +882,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     for(const mv of moves){
       const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
       if(tryWin) return -1500000;
-      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt, 0);
+      const nxtH = nextAliveOn(newElim, turnPlayer); // ②修正: newElimから計算
+      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxtH, 0);
       best = Math.min(best, score);
       beta = Math.min(beta, score);
       if(beta <= alpha) break;
@@ -832,20 +893,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     let best = -Infinity;
     
     for(const mv of moves){
-        const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-        if(tryWin) return 1800000;
-        const cap = !mv.drop && bd[mv.tr]?.[mv.tc];
-        if(cap && cap.p === 'OU'){
-        const newElim = elim.slice(); newElim[cap.o] = true;
-        const newAlive = newElim.filter(e=>!e).length;
-        if(newAlive <= 1) return 2000000;
-        const nxt2 = nextAliveOn(newElim, turnPlayer);
-        const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, 0);
-        best = Math.max(best, score);
-        alpha = Math.max(alpha, score);
-        if(beta <= alpha) break;
-        continue;
-      }
+      const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
+      if(tryWin) return 1800000;
       const nxt2 = nextAliveOn(newElim, turnPlayer);
       const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, 0);
       best = Math.max(best, score);
@@ -888,13 +937,22 @@ function aiMove(o,bd,hd,elim){
   let moves=allMovesOn(bd,hd,o,elim);
   if(!moves.length) return null;
 
-  // 自爆防止: 動かした後に王が取られる手は除外
-  const safeMoves=moves.filter(mv=>{
-    const {b:nb,h:nh}=simApply(bd,hd,elim,mv,o);
-    return !kingWouldBeCaptured(nb,nh,o, elim);
-  });
-  // 全部危険なら仕方なく元のリストから選ぶ
-  if(safeMoves.length>0) moves=safeMoves;
+  // 王手されているなら回避手だけに絞る（minimaxRoundと同じ処理）
+  const inCheck = kingWouldBeCaptured(bd,hd,o,elim);
+  if(inCheck){
+    const escapeMoves=moves.filter(mv=>{
+      const {b:nb,h:nh,elim:ne}=simApply(bd,hd,elim,mv,o);
+      return !kingWouldBeCaptured(nb,nh,o,ne);
+    });
+    if(escapeMoves.length) moves=escapeMoves;
+  } else {
+    // 自爆防止: 動かした後に王が取られる手は除外
+    const safeMoves=moves.filter(mv=>{
+      const {b:nb,h:nh,elim:ne}=simApply(bd,hd,elim,mv,o);
+      return !kingWouldBeCaptured(nb,nh,o,ne);
+    });
+    if(safeMoves.length>0) moves=safeMoves;
+  }
 
   let best=moves[0], bestScore=-Infinity;
   for(const mv of moves){
@@ -910,10 +968,12 @@ function aiMove(o,bd,hd,elim){
 
 
 
-    const {b:nb,h:nh,elim:newElim}=simApply(bd,hd,elim,mv,o);
+    const {b:nb,h:nh,elim:newElim,tryWin}=simApply(bd,hd,elim,mv,o);
+    // 王を取れるなら即返す
+    if(tryWin) return mv;
     const nxt = nextAliveOn(newElim, o);
     const aliveNow = newElim.filter(e=>!e).length;
-    const searchDepth = aliveNow <= 2 ? 2 : 2;
+    const searchDepth = aliveNow <= 2 ? 2 : 3;
     const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt);
     
     if(v>bestScore){bestScore=v;best=mv;}
