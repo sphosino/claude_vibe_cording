@@ -941,18 +941,6 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     // 手なし: 次のプレイヤーへ（深さ消費なし、スキップ数+1）
     return minimaxRound(bd, hd, elim, depth, alpha, beta, nxt, skips+1);
   }
-  // 王手されているか確認
-  const inCheck = kingWouldBeCaptured(bd, hd, turnPlayer, elim);
-
-  // 王手中は回避手のみに絞る
-  if(inCheck){
-    const escapeMoves = moves.filter(mv=>{
-      const {b:nb,h:nh,elim:ne}=simApply(bd,hd,elim,mv,turnPlayer);
-      return !kingWouldBeCaptured(nb,nh,turnPlayer,ne);
-    });
-    if(escapeMoves.length) moves = escapeMoves;
-    // 回避手がない場合はそのまま（詰み）
-  }
 
   moves.sort((a, b) => quickMoveScore(bd, b) - quickMoveScore(bd, a));
   moves = moves.slice(0, AI_MOVE_CANDIDATES);
@@ -1018,23 +1006,6 @@ function isFreeCapture(bd, hd, elim, mv, o){
 function aiMove(o,bd,hd,elim){
   let moves=allMovesOn(bd,hd,o,elim);
   if(!moves.length) return null;
-
-  // 王手されているなら回避手だけに絞る（minimaxRoundと同じ処理）
-  const inCheck = kingWouldBeCaptured(bd,hd,o,elim);
-  if(inCheck){
-    const escapeMoves=moves.filter(mv=>{
-      const {b:nb,h:nh,elim:ne}=simApply(bd,hd,elim,mv,o);
-      return !kingWouldBeCaptured(nb,nh,o,ne);
-    });
-    if(escapeMoves.length) moves=escapeMoves;
-  } else {
-    // 自爆防止: 動かした後に王が取られる手は除外
-    const safeMoves=moves.filter(mv=>{
-      const {b:nb,h:nh,elim:ne}=simApply(bd,hd,elim,mv,o);
-      return !kingWouldBeCaptured(nb,nh,o,ne);
-    });
-    if(safeMoves.length>0) moves=safeMoves;
-  }
 
   let best=moves[0], bestScore=-Infinity;
   for(const mv of moves){
