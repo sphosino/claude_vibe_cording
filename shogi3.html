@@ -836,7 +836,7 @@ function evalStatic(b, h, elim, vp){
     return score;
   }
 
-  // ── 共闘モード（既存ロジック）──
+  // ── 共闘モード──
   const humanIsElim = elim[humanPlayer];
 
   if(humanIsElim){
@@ -872,6 +872,17 @@ function evalStatic(b, h, elim, vp){
   } else {
     const hu = humanPlayer;
     let score = pieceScore.reduce((acc, cur, i) => acc + (hu === i ? -cur : cur), 0);
+    // ★★★ ここから追加 ★★★
+    // 2. 味方の脱落ペナルティ（あなたの案）
+    [0, 1, 2].forEach(o => {
+      if (o !== hu && elim[o]) {
+        // 脱落した味方が「持っていたはずの駒の価値」を、そのままマイナスする
+        // これにより「戦力喪失」を評価
+        score -= pieceScore[o]; 
+        score -= 2000; // 王様の基本価値（任意）
+      }
+    });
+    // ★★★ ここまで追加 ★★★
     const [kr,kc] = findKingOn(b, hu);
     if(kr >= 0){
       [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
