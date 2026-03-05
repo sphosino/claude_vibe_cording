@@ -4,5 +4,9 @@
 
 
 
+著作権は主にアンソロピック、openAI、googleが所持していますｗ
+
+
+
 [作品一覧](https://sphosino.github.io/claude_vibe_cording/)
 
