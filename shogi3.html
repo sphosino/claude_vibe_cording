@@ -901,7 +901,13 @@ function nextAliveOn(elim, current){
   }
   return -1;
 }
-
+// 1. 軽量なソート用スコア関数を導入
+function quickMoveScore(bd, mv) {
+  if (mv.drop) return PV[mv.piece] * 0.1; // 打ち込みは低め
+  const target = bd[mv.tr][mv.tc];
+  if (target) return PV[target.p] * 10 + (mv.pro ? 50 : 0); // 取る手を優先
+  return (mv.pro ? 20 : 0);
+}
 
 // ミニマックス探索
 // depth = 残り手数（1手ごとに-1）
@@ -948,14 +954,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, skips){
     // 回避手がない場合はそのまま（詰み）
   }
 
-  // 取り手に大きなボーナスを乗せてevalStaticでソート → 上位15手を候補に
-  moves.sort((a,b)=>{
-    const {b:ba,h:ha,elim:ea}=simApply(bd,hd,elim,a,turnPlayer);
-    const {b:bb,h:hb,elim:eb}=simApply(bd,hd,elim,b,turnPlayer);
-    const capBonusA = (!a.drop&&bd[a.tr]?.[a.tc]) ? (PV[bd[a.tr][a.tc].p]||0)*AI_CAP_BONUS_MULT : 0;
-    const capBonusB = (!b.drop&&bd[b.tr]?.[b.tc]) ? (PV[bd[b.tr][b.tc].p]||0)*AI_CAP_BONUS_MULT : 0;
-    return (evalStatic(bb,hb,eb)+capBonusB) - (evalStatic(ba,ha,ea)+capBonusA);
-  });
+  moves.sort((a, b) => quickMoveScore(bd, b) - quickMoveScore(bd, a));
   moves = moves.slice(0, AI_MOVE_CANDIDATES);
 
 
