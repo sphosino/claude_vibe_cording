@@ -305,7 +305,7 @@
   <h1>⚔️ DUNGEON<br>OF DOOM ⚔️</h1>
   <p class="subtitle">〜 地下最深部の魔王を倒せ！ 〜</p>
   <p style="font-size:1.4em; color:#6060a0; margin-bottom: 1.2em;">
-    矢印キー で移動<br>
+    WASD / 矢印キー で移動<br>
     アイテムを拾って強くなれ！<br>
     全10フロアを制覇せよ！
   </p>
@@ -382,7 +382,8 @@
   <h2 id="overlay-title"></h2>
   <p id="overlay-sub1"></p>
   <p id="overlay-sub2"></p>
-  <button onclick="startGame()">🔄 もう一度</button>
+  <button onclick="startGame()">🔄 もう一度 [X]</button>
+  <button onclick="returnToTitle()" style="margin-top:10px; border-color:#6060a0; color:#6060a0;">🏠 タイトルへ戻る [Z]</button>
 </div>
 
 <script>
@@ -767,6 +768,7 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 
 function drawGame() {
+  if (!G.player) return;
   ctx.fillStyle = '#080810';
   ctx.fillRect(0, 0, W, H);
   
@@ -1692,7 +1694,14 @@ function invUse() {
   exitInvMode();
   useItemAtIndex(idx);
 }
-// ===== TITLE / OVERLAY KEY NAVIGATION =====
+function returnToTitle() {
+  G = {};
+  document.getElementById('overlay').style.display = 'none';
+  document.getElementById('game-screen').style.display = 'none';
+  document.getElementById('title-screen').style.display = '';
+}
+
+
 const DIFF_ORDER = ['easy', 'normal', 'hard', 'hell'];
 
 document.addEventListener('keydown', e => {
@@ -1724,6 +1733,9 @@ document.addEventListener('keydown', e => {
     if (e.key === 'x' || e.key === 'X' || e.key === 'Enter' || e.key === ' ') {
       e.preventDefault();
       startGame();
+    } else if (e.key === 'z' || e.key === 'Z') {
+      e.preventDefault();
+      returnToTitle();
     }
     return;
   }
