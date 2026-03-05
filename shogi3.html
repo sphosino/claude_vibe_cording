@@ -378,6 +378,7 @@ function fitCanvas(){
   if(!w){ requestAnimationFrame(fitCanvas); return; }
   window._canvasScale = w / CW;
 }
+window.addEventListener('resize', fitCanvas);
 
 
 function setStatus(msg){document.getElementById('info').textContent=msg;}
@@ -1415,17 +1416,21 @@ function drawHandRow(o, side){
 }
 
 function drawAllHands(){
-  // P0（プレイヤー）の手駒は常に下
-  // 他の手駒は視点に合わせて配置
-  // 操作プレイヤーの手駒は常に下、他は視点に合わせて配置
-  const others=[0,1,2].filter(p=>p!==humanPlayer);
+  // 操作プレイヤーの手駒は常に下
+  // 他の手駒は視点に合わせて配置（重複描画しないようにチェック）
+  // viewPlayer=0: 下=P0, 上=P1, 右=P2
+  // viewPlayer=1: 下=P1, 上=P0, 左=P2
+  // viewPlayer=2: 下=P2, 左=P0(青), 右=P1(赤)
   drawHandRow(humanPlayer,'bottom');
   if(viewPlayer===0){
-    drawHandRow(1,'top'); drawHandRow(2,'right');
+    if(humanPlayer!==1) drawHandRow(1,'top');
+    if(humanPlayer!==2) drawHandRow(2,'right');
   } else if(viewPlayer===1){
-    drawHandRow(0,'top'); drawHandRow(2,'left');
-  } else {
-    drawHandRow(0,'top'); drawHandRow(1,'left');
+    if(humanPlayer!==0) drawHandRow(0,'top');
+    if(humanPlayer!==2) drawHandRow(2,'left');
+  } else { // viewPlayer===2
+    if(humanPlayer!==0) drawHandRow(0,'left');
+    if(humanPlayer!==1) drawHandRow(1,'right');
   }
 }
 
