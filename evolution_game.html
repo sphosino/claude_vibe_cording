@@ -7,7 +7,12 @@
 <style>
 * { margin:0; padding:0; box-sizing:border-box; }
 html,body { width:100%; height:100%; background:#030609; overflow:hidden; }
-canvas { display:block; position:fixed; top:0; left:0; }
+canvas {
+  display:block;
+  position:fixed;
+  top:50%; left:50%;
+  transform-origin: center center;
+}
 </style>
 </head>
 <body>
@@ -20,12 +25,29 @@ canvas { display:block; position:fixed; top:0; left:0; }
 
 const canvas = document.getElementById('c');
 const ctx    = canvas.getContext('2d');
-let W = canvas.width  = window.innerWidth;
-let H = canvas.height = window.innerHeight;
-window.addEventListener('resize', () => {
-  W = canvas.width  = window.innerWidth;
-  H = canvas.height = window.innerHeight;
-});
+
+// ── 固定解像度 1280×720 / 画面に合わせてCSSスケール ──
+const W = canvas.width  = 1280;
+const H = canvas.height = 720;
+
+let _scale = 1;
+function fitCanvas() {
+  const sw = window.innerWidth  / W;
+  const sh = window.innerHeight / H;
+  _scale = Math.min(sw, sh);
+  canvas.style.transform = `translate(-50%,-50%) scale(${_scale})`;
+}
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
+// マウス座標をゲーム座標に変換
+function toGameXY(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return {
+    x: (clientX - rect.left) / _scale,
+    y: (clientY - rect.top)  / _scale,
+  };
+}
 
 // ═══════════════════════════════════════════════════════
 //  ⚙  BALANCE CONSTANTS — ここを触ればゲームバランス調整OK
@@ -69,8 +91,8 @@ const B = {
   // ── 戦闘 ─────────────────────────────────────────────
   WEAK_DMG_MULT:      2.5,   // 弱点属性のダメージ倍率
   WEAK_SCORE_MULT:    2,     // 弱点属性のスコア倍率
-  CONTACT_DMG:        4,     // 敵接触ダメージ
-  INVINCIBLE_FRAMES:  70,    // 被弾後の無敵フレーム数
+  CONTACT_DMG:        7,     // 敵接触ダメージ
+  INVINCIBLE_FRAMES:  28,    // 被弾後の無敵フレーム数
   BULLET_LIFE:        130,   // 弾の寿命(フレーム)
   EXPLODE_RADIUS:     68,    // 緑弾爆発の範囲
 
@@ -90,7 +112,7 @@ const B = {
 // ─────────────────────── DATA TABLES ───────────────────────
 
 const BULLET = {
-  RED:   { color:'#ff3333', glow:'#ff0000', dmg:15, spd:6.0, sz:5,  pierce:false, explode:false },
+  RED:   { color:'#ff3333', glow:'#ff0000', dmg:22, spd:7.5, sz:5,  pierce:false, explode:false, stun:true },
   BLUE:  { color:'#33aaff', glow:'#0066ff', dmg:11, spd:8.5, sz:4,  pierce:true,  explode:false },
   GREEN: { color:'#33ff77', glow:'#00ff44', dmg:9,  spd:4.5, sz:6,  pierce:false, explode:true  },
 };
@@ -100,6 +122,7 @@ const ENEMY = {
   BIKE:     { col:'#5577ff', name:'バイク', hp:30,  spd:1.45, sz:11, score:20, weakTo:'GREEN', minWave:1 },
   TANK:     { col:'#44bb55', name:'戦車',   hp:180, spd:0.26, sz:27, score:50, weakTo:'RED',   minWave:2 },
   HELI:     { col:'#ffaa33', name:'ヘリ',   hp:85,  spd:0.95, sz:20, score:35, weakTo:'RED',   minWave:3 },
+  RUSHER:   { col:'#ff6600', name:'突進体', hp:40,  spd:0.55, sz:13, score:30, weakTo:'BLUE',  minWave:4 },
 };
 const ITEM_COL   = { 'BULLET+':'#ffff44','FIRERATE':'#ff8844','SPEED':'#44ffff','SIZE':'#ff44ff','HEAL':'#ff88aa' };
 const ITEM_LABEL = { 'BULLET+':'弾↑','FIRERATE':'速↑','SPEED':'足↑','SIZE':'大↑','HEAL':'HP↑' };
@@ -125,12 +148,15 @@ const NEWS = [
 // ─────────────────────── STATE ───────────────────────
 
 let state    = 'TITLE'; // TITLE | PLAYING | ENDING | GAMEOVER
+let difficulty = 'NORMAL'; // NORMAL | HARD
+let titleSel   = 0; // 0=NORMAL 1=HARD
 let score    = 0;
 let elapsed  = 0;
 let endTimer = 0;
 let lastTime = 0;
 let spawnTimer = 0;
 let newsIdx  = 0;
+let tvOn     = false;  // TVオン/オフ
 
 const player = {
   x:0, y:0, hp:B.PLAYER_HP, maxHp:B.PLAYER_HP, spd:B.PLAYER_SPD,
@@ -140,6 +166,54 @@ const player = {
 
 let bullets=[], enemies=[], items=[], particles=[], floatMsgs=[];
 let keys={};
+
+// ─────────────────────── DEBUG / GRID ───────────────────────
+let useGrid  = true;   // [G]キーで切替
+let showDebug= false;  // [F]キーで切替
+
+// パフォーマンス計測
+const perf = {
+  checksNoGrid: 0, checksGrid: 0,
+  fps: 0, frameCount: 0, fpsTimer: 0,
+  // 直近60フレームの移動平均
+  histNoGrid:  new Array(60).fill(0),
+  histGrid:    new Array(60).fill(0),
+  histTimeMs:  new Array(60).fill(0),  // 1フレームの実処理時間(ms)
+  histRenderMs: new Array(60).fill(0), // 描画時間(ms)
+  histIdx: 0,
+  updateMs: 0,   // 直近60fの平均処理時間
+  renderMs: 0,   // 直近60fの平均描画時間
+};
+
+// 空間グリッド (1280×720 を CELL_SIZE px のセルに分割)
+const CELL_SIZE = 80;
+const GRID_COLS = Math.ceil(1280 / CELL_SIZE);
+const GRID_ROWS = Math.ceil(720  / CELL_SIZE);
+let grid = [];
+
+function buildGrid() {
+  // 毎フレームリセット
+  grid = new Array(GRID_COLS * GRID_ROWS).fill(null).map(()=>[]);
+  for (const e of enemies) {
+    const cx = Math.floor(e.x / CELL_SIZE);
+    const cy = Math.floor(e.y / CELL_SIZE);
+    if (cx<0||cx>=GRID_COLS||cy<0||cy>=GRID_ROWS) continue;
+    grid[cy * GRID_COLS + cx].push(e);
+  }
+}
+
+function getNearbyCells(bx, by, radius) {
+  // 弾の周囲セルを列挙
+  const x0 = Math.max(0, Math.floor((bx - radius) / CELL_SIZE));
+  const x1 = Math.min(GRID_COLS-1, Math.floor((bx + radius) / CELL_SIZE));
+  const y0 = Math.max(0, Math.floor((by - radius) / CELL_SIZE));
+  const y1 = Math.min(GRID_ROWS-1, Math.floor((by + radius) / CELL_SIZE));
+  const result = [];
+  for (let gy=y0; gy<=y1; gy++)
+    for (let gx=x0; gx<=x1; gx++)
+      for (const e of grid[gy*GRID_COLS+gx]) result.push(e);
+  return result;
+}
 
 // ─────────────────────── AUDIO (Web Audio API) ───────────────────────
 
@@ -190,13 +264,20 @@ window.addEventListener('keydown', e => {
                     'KeyA','KeyW','KeyS','KeyD','KeyM','Digit1','Digit2','Digit3','Digit4'];
   if (gameKeys.includes(e.code)) e.preventDefault();
 
-  if ((e.code==='Space'||e.code==='Enter') && state==='TITLE') { ensureAudio(); startGame(); }
+  if (state==='TITLE') {
+    if (e.code==='ArrowLeft'||e.code==='KeyA')  titleSel=0;
+    if (e.code==='ArrowRight'||e.code==='KeyD') titleSel=1;
+    if (e.code==='Space'||e.code==='Enter') { ensureAudio(); difficulty=titleSel===0?'NORMAL':'HARD'; startGame(); }
+  }
   if ((e.code==='Space'||e.code==='Enter') && (state==='GAMEOVER'||state==='HUMANWIN')) state='TITLE';
   if (state==='PLAYING') {
     if (e.code==='Digit1') player.mode='RED';
     if (e.code==='Digit2') player.mode='BLUE';
     if (e.code==='Digit3') player.mode='GREEN';
     if (e.code==='Digit4'||e.code==='KeyM') player.mode='MIXED';
+    if (e.code==='KeyG') { useGrid=!useGrid; }
+    if (e.code==='KeyF') { showDebug=!showDebug; }
+    if (e.code==='KeyT') { tvOn=!tvOn; }
   }
 });
 window.addEventListener('keyup', e => { keys[e.code]=false; });
@@ -206,11 +287,23 @@ let mouseTgt = null;  // {x, y}
 
 canvas.addEventListener('click', e => {
   ensureAudio();
-  if (state==='TITLE')    { startGame(); return; }
-  if (state==='GAMEOVER'||state==='HUMANWIN') { state='TITLE'; return; }
+  const {x:cx, y:cy} = toGameXY(e.clientX, e.clientY);
+
+  if (state==='TITLE') {
+    // 難易度ボタン判定
+    const ny = H/2 + 148;
+    if (cy >= ny && cy <= ny+44) {
+      if (cx >= W/2-200 && cx <= W/2-10)  { difficulty='NORMAL'; startGame(); return; }
+      if (cx >= W/2+10  && cx <= W/2+200) { difficulty='HARD';   startGame(); return; }
+    }
+    return;
+  }
+  if (state==='GAMEOVER'||state==='HUMANWIN') { state='TITLE'; titleSel = difficulty==='HARD'?1:0; return; }
   if (state!=='PLAYING') return;
 
-  const cx=e.clientX, cy=e.clientY;
+  // TVボタン判定
+  const tvBX2=14+84*4, tvBY2=H-46-36;
+  if (cx>=tvBX2 && cx<=tvBX2+60 && cy>=tvBY2 && cy<=tvBY2+46) { tvOn=!tvOn; return; }
 
   // モードボタン判定 — 左下 (y: H-BH-36 〜 H-36, 幅78, gap84)
   const BW=78, BH=46, BGAP=84, BY=H-BH-36;
@@ -264,10 +357,31 @@ function fireBullets(now) {
   if (player.mode==='MIXED') player.mixIdx++;
 }
 
+function killEnemy(e, idx) {
+  // デスダッシュ中は無敵（何があっても消えない）
+  if (e.deathDash) return false;
+  // RUSHERは死亡時にデスダッシュ
+  if (e.type === 'RUSHER' && !e.deathDash) {
+    e.deathDash = true;
+    e.hp = 1;  // 死なないようにHP残す（デスダッシュ中は弾に当たらない）
+    // 現在の向きor最後のダッシュ方向で爆走
+    const ang = Math.atan2(player.y - e.y, player.x - e.x);
+    const speed = e.spd * 5;  // デスダッシュ速度
+    e.dashVx = Math.cos(ang) * speed;
+    e.dashVy = Math.sin(ang) * speed;
+    e.dashing = true;
+    // タイマーなし：画面外に出るまで走り続ける
+    playTone(100,'sawtooth',0.18,0.15,40);
+    spawnParticles(e.x, e.y, 20, '#ff6600');
+    return false; // まだ消さない
+  }
+  return true; // 普通に消す
+}
+
 function spawnEnemy() {
   if (enemies.length >= B.ENEMY_MAX) return;
   const wave = currentWave();
-  const pool = Object.entries(ENEMY).filter(([,v])=>v.minWave<=wave).map(([k])=>k);
+  const pool = Object.entries(ENEMY).filter(([k,v])=>v.minWave<=wave && (k!=='RUSHER'||difficulty==='HARD')).map(([k])=>k);
   const type = pool[Math.floor(Math.random()*pool.length)];
   const ed   = ENEMY[type];
   let x,y;
@@ -289,12 +403,18 @@ function doExplosion(x, y, radius, dmg, srcType) {
   sfxExplode();
   for (let i=enemies.length-1;i>=0;i--) {
     const e=enemies[i];
-    if (Math.hypot(e.x-x,e.y-y)<radius+e.sz) {
+    const _er=radius+e.sz; if ((e.x-x)*(e.x-x)+(e.y-y)*(e.y-y)<_er*_er) {
+      if (e.deathDash) continue;  // デスダッシュ中は爆発も無効
       let d=dmg; if(e.weakTo===srcType) d*=B.WEAK_DMG_MULT;
       e.hp-=d; e.flash=8;
       spawnParticles(e.x,e.y,6,e.col);
       if (e.hp<=0) {
-        score+=e.score; spawnParticles(e.x,e.y,14,e.col); tryDropItem(e.x,e.y); enemies.splice(i,1);
+        if (killEnemy(e, i)) {
+          score+=e.score; spawnParticles(e.x,e.y,14,e.col); tryDropItem(e.x,e.y);
+          enemies.splice(i,1);
+        } else {
+          score+=e.score;
+        }
       }
     }
   }
@@ -404,24 +524,49 @@ function updatePlaying(now, dt) {
   fireBullets(now);
 
   // Update bullets
+  let frameChecksNoGrid = 0;
+  let frameChecksGrid   = 0;
+  if (useGrid) buildGrid();
+
   for (let i=bullets.length-1;i>=0;i--) {
     const b=bullets[i];
     b.x+=b.vx; b.y+=b.vy; b.life--;
     if (b.life<=0||b.x<-65||b.x>W+65||b.y<-65||b.y>H+65) { bullets.splice(i,1); continue; }
     let destroyed=false;
-    for (let j=enemies.length-1;j>=0;j--) {
-      const e=enemies[j];
+
+    // グリッドON: 近傍セルの敵のみチェック / OFF: 全敵チェック
+    const targets = useGrid ? getNearbyCells(b.x, b.y, b.sz+40) : enemies;
+
+    for (let j=targets.length-1;j>=0;j--) {
+      const e=targets[j];
+      if (!enemies.includes(e)) continue; // グリッド時は既に倒された敵をスキップ
       if (b.hitSet.has(e.id)) continue;
-      if (Math.hypot(b.x-e.x,b.y-e.y)<b.sz+e.sz) {
+      if (e.deathDash) continue;  // デスダッシュ中は被弾なし
+
+      // 計測
+      if (useGrid) frameChecksGrid++; else frameChecksNoGrid++;
+
+      const _br=b.sz+e.sz; if ((b.x-e.x)*(b.x-e.x)+(b.y-e.y)*(b.y-e.y)<_br*_br) {
         let dmg=b.dmg; if(e.weakTo===b.type) dmg*=B.WEAK_DMG_MULT;
         e.hp-=dmg; e.flash=8;
+        // 赤弾：ノックバック＆スタン
+        if (b.type==='RED') {
+          const _ang = Math.atan2(e.y-player.y, e.x-player.x);
+          e.x += Math.cos(_ang) * 10;
+          e.y += Math.sin(_ang) * 10;
+          e.stun = (e.stun||0) + 20; // 約0.33秒スタン（加算式）
+        }
         sfxHit();
         spawnParticles(b.x,b.y,5,BULLET[b.type].color);
-        if (e.hp<=0) {
-          score+=e.score*(e.weakTo===b.type?B.WEAK_SCORE_MULT:1);
-          spawnParticles(e.x,e.y,15,e.col);
-          tryDropItem(e.x,e.y);
-          enemies.splice(j,1);
+        if (e.hp<=0 && !e.deathDash) {
+          if (killEnemy(e, enemies.indexOf(e))) {
+            score+=e.score*(e.weakTo===b.type?B.WEAK_SCORE_MULT:1);
+            spawnParticles(e.x,e.y,15,e.col);
+            tryDropItem(e.x,e.y);
+            enemies.splice(enemies.indexOf(e),1);
+          } else {
+            score+=e.score*(e.weakTo===b.type?B.WEAK_SCORE_MULT:1);
+          }
         }
         if (b.explode) {
           doExplosion(b.x,b.y,B.EXPLODE_RADIUS,b.dmg*0.7,b.type);
@@ -433,16 +578,107 @@ function updatePlaying(now, dt) {
     }
   }
 
+  // 計測値を履歴に記録
+  if (useGrid) {
+    perf.histGrid[perf.histIdx]   = frameChecksGrid;
+    perf.histNoGrid[perf.histIdx] = 0;
+  } else {
+    perf.histNoGrid[perf.histIdx] = frameChecksNoGrid;
+    perf.histGrid[perf.histIdx]   = 0;
+  }
+  perf.histIdx = (perf.histIdx+1) % 60;
+
   // Update enemies
   for (let i=enemies.length-1;i>=0;i--) {
     const e=enemies[i];
     if (e.flash>0) e.flash--;
     const dx=player.x-e.x, dy=player.y-e.y, dist=Math.hypot(dx,dy);
-    if (dist>0.5) { e.x+=dx/dist*e.spd; e.y+=dy/dist*e.spd; }
-    if (dist<e.sz+18&&player.invincible<=0) {
-      player.hp-=B.CONTACT_DMG; player.invincible=B.INVINCIBLE_FRAMES; sfxDamage();
-      spawnParticles(player.x,player.y,10,'#ff3333');
-      if (player.hp<=0) { player.hp=0; state='GAMEOVER'; endTimer=0; return; }
+
+    // 突進体の特殊挙動
+    if (e.type==='RUSHER') {
+      // デスダッシュ中
+      if (e.deathDash) {
+        e.x += e.dashVx; e.y += e.dashVy;
+        // 残像
+        if (Math.random()<0.6) spawnParticles(e.x, e.y, 2, '#ff4400');
+        // プレイヤーに当たったらダメージ（1回だけ・その後は方向転換して離脱）
+        const _dr=e.sz+18;
+        if (!e.deathHit && (player.x-e.x)*(player.x-e.x)+(player.y-e.y)*(player.y-e.y)<_dr*_dr) {
+          e.deathHit = true;  // 以降ヒットしない
+          player.hp -= B.CONTACT_DMG * 1.5;  // 1回だけなのでそこそこ痛い
+          player.invincible = B.INVINCIBLE_FRAMES;
+          sfxDamage();
+          spawnParticles(player.x, player.y, 14, '#ff6600');
+          floatMsgs.push({text:'デスアタック！',x:player.x,y:player.y-70,life:85,maxLife:85});
+          // 当たった後は画面外へ向かうよう方向転換
+          const _da = Math.atan2(e.dashVy, e.dashVx);
+          e.dashVx = Math.cos(_da) * Math.hypot(e.dashVx, e.dashVy);
+          e.dashVy = Math.sin(_da) * Math.hypot(e.dashVx, e.dashVy);
+          if (player.hp<=0) { player.hp=0; state='GAMEOVER'; endTimer=0; return; }
+        }
+        // 画面外で消滅
+        if (e.x<-120||e.x>W+120||e.y<-120||e.y>H+120) {
+          spawnParticles(e.x, e.y, 25, '#ff6600');
+          enemies.splice(i,1);
+        }
+        continue;
+      }
+
+      e.dashTimer = (e.dashTimer||0) - 1;
+      e.chargeTimer = (e.chargeTimer||0) - 1;
+
+      if (e.dashing) {
+        // ダッシュ中: 固定方向に猛進
+        e.x += e.dashVx; e.y += e.dashVy;
+        e.dashDur = (e.dashDur||0) - 1;
+        if (e.dashDur <= 0) {
+          e.dashing = false;
+          e.dashTimer = 180 + Math.floor(Math.random()*120); // 次のダッシュまで3〜5秒
+        }
+        // ダッシュ中の残像パーティクル
+        if (Math.random()<0.4) spawnParticles(e.x, e.y, 1, '#ff8800');
+
+      } else if (e.chargeTimer > 0) {
+        // チャージ中: 止まって向きを固定
+        if (dist>0.5) { e.x+=dx/dist*e.spd*0.15; e.y+=dy/dist*e.spd*0.15; }
+
+      } else if (e.dashTimer <= 0) {
+        // チャージ開始
+        e.chargeTimer = 80; // 約1.3秒チャージ（長めに）
+        e.dashVx = (dx/dist) * (e.spd * 7.0);
+        e.dashVy = (dy/dist) * (e.spd * 7.0);
+
+      } else if (e.chargeTimer === 0) {
+        // ダッシュ発射！
+        e.dashing = true;
+        e.dashDur = 28;
+        playTone(180,'sawtooth',0.05,0.08,80);
+
+      } else {
+        // 通常移動
+        if (e.stun>0) { e.stun--; }
+        else if (dist>0.5) { e.x+=dx/dist*e.spd; e.y+=dy/dist*e.spd; }
+      }
+
+      // ダッシュ中は接触ダメージ2倍
+      const hitR = e.sz + 18;
+      if ((player.x-e.x)*(player.x-e.x)+(player.y-e.y)*(player.y-e.y) < hitR*hitR && player.invincible<=0) {
+        const dmg = e.dashing ? B.CONTACT_DMG*2 : B.CONTACT_DMG;
+        player.hp -= dmg; player.invincible = B.INVINCIBLE_FRAMES; sfxDamage();
+        spawnParticles(player.x,player.y,10,'#ff6600');
+        if (e.dashing) { e.dashing=false; e.dashTimer=120; } // ダッシュ後はよろける
+        if (player.hp<=0) { player.hp=0; state='GAMEOVER'; endTimer=0; return; }
+      }
+
+    } else {
+      // 通常敵
+      if (e.stun>0) { e.stun--; } // スタン中は動けない
+      else if (dist>0.5) { e.x+=dx/dist*e.spd; e.y+=dy/dist*e.spd; }
+      if (dist<e.sz+18&&player.invincible<=0) {
+        player.hp-=B.CONTACT_DMG; player.invincible=B.INVINCIBLE_FRAMES; sfxDamage();
+        spawnParticles(player.x,player.y,10,'#ff3333');
+        if (player.hp<=0) { player.hp=0; state='GAMEOVER'; endTimer=0; return; }
+      }
     }
   }
 
@@ -450,7 +686,7 @@ function updatePlaying(now, dt) {
   for (let i=items.length-1;i>=0;i--) {
     const it=items[i]; it.life--; it.phase+=0.055;
     if (it.life<=0){items.splice(i,1);continue;}
-    if (Math.hypot(player.x-it.x,player.y-it.y)<26) {
+    if ((player.x-it.x)*(player.x-it.x)+(player.y-it.y)*(player.y-it.y)<676) {
       collectItem(it.type); spawnParticles(it.x,it.y,8,ITEM_COL[it.type]); items.splice(i,1);
     }
   }
@@ -505,6 +741,7 @@ function render(now) {
 
   // HUD
   drawHUD();
+  drawTV(now);
 
   // Float msgs
   ctx.textAlign='center';
@@ -689,6 +926,8 @@ function drawEnemy(e, now) {
       ctx.restore();
       break;
     case 'HELI':
+      ctx.save();
+      ctx.rotate(Math.atan2(player.y-e.y, player.x-e.x) + Math.PI);
       ctx.fillStyle=col;
       ctx.beginPath(); ctx.arc(0,0,sz*0.58,0,Math.PI*2); ctx.fill();
       ctx.fillRect(sz*0.52,-sz*0.12,sz*0.82,sz*0.24);
@@ -699,8 +938,61 @@ function drawEnemy(e, now) {
       ctx.lineTo(-Math.cos(ra)*sz,-Math.sin(ra)*sz); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(Math.cos(ra+1.57)*sz,Math.sin(ra+1.57)*sz);
       ctx.lineTo(-Math.cos(ra+1.57)*sz,-Math.sin(ra+1.57)*sz); ctx.stroke();
+      ctx.restore();
       break;
-  }
+
+    case 'RUSHER': {
+      const ang = Math.atan2(player.y-e.y, player.x-e.x);
+      ctx.save(); ctx.rotate(ang);
+
+      const charging = (e.chargeTimer||0) > 0;
+      const dashing  = !!e.dashing;
+
+      // チャージ中は赤く点滅
+      const bodyCol = dashing ? '#ffffff' : charging ? (Math.sin(Date.now()*0.04)>0?'#ffff00':'#ff4400') : col;
+      ctx.fillStyle = bodyCol;
+      ctx.shadowColor = dashing ? '#ffffff' : '#ff6600';
+      ctx.shadowBlur  = dashing ? 28 : charging ? 18 : 8;
+
+      // 矢印型ボディ
+      ctx.beginPath();
+      ctx.moveTo( sz,       0);          // 先端
+      ctx.lineTo(-sz*0.55,  sz*0.65);    // 右後
+      ctx.lineTo(-sz*0.2,   0);          // 後ろくびれ
+      ctx.lineTo(-sz*0.55, -sz*0.65);    // 左後
+      ctx.closePath(); ctx.fill();
+
+      // チャージ中: 集束エフェクト（前方に光が集まる）
+      if (charging) {
+        const prog = 1 - (e.chargeTimer||0)/55;
+        ctx.strokeStyle=`rgba(255,150,0,${prog*0.8})`; ctx.lineWidth=2;
+        for (let k=0;k<4;k++) {
+          const a = (k/4)*Math.PI*2 + Date.now()*0.01;
+          const r = sz*(2.2-prog*1.4);
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(a)*r, Math.sin(a)*r);
+          ctx.lineTo(sz*0.5, 0);
+          ctx.stroke();
+        }
+      }
+
+      // ダッシュ中: スピードライン
+      if (dashing) {
+        ctx.strokeStyle='rgba(255,200,100,0.5)'; ctx.lineWidth=2;
+        for (let k=0;k<3;k++) {
+          const oy = (k-1)*sz*0.4;
+          ctx.beginPath();
+          ctx.moveTo(-sz*0.5, oy);
+          ctx.lineTo(-sz*2.2, oy);
+          ctx.stroke();
+        }
+      }
+      ctx.shadowBlur=0; ctx.restore();
+      break;
+    }
+
+
+  } // switch end
 
   // HP bar
   if (e.hp<e.maxHp) {
@@ -730,6 +1022,120 @@ function drawItem(it) {
   ctx.font='bold 9px monospace'; ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillText(ITEM_LABEL[it.type],it.x,it.y+bob);
   ctx.textBaseline='alphabetic'; ctx.textAlign='left'; ctx.globalAlpha=1;
+}
+
+
+// ─────────────────────── TV OVERLAY ───────────────────────
+
+const TV_CHANNELS = [
+  // newsIdxに応じた実況テキスト（複数行）
+  ["NHK緊急放送", "未確認生命体の出現を確認", "現在、自衛隊が調査中", "市民の皆様は落ち着いて"],
+  ["速報テロップ", "生命体が市街地に接近中！", "住民は即時避難してください", "繰り返します　即時避難を"],
+  ["防衛省発表", "歩兵部隊が交戦を開始", "損害は軽微との報告", "作戦は順調とのことです"],
+  ["現地レポート", "バイク偵察部隊を投入", "包囲網の構築を進めています", "視聴者の方は外出を控えて"],
+  ["緊急会見", "生命体に変異の兆候！", "攻撃が激化しています", "政府は対策を検討中"],
+  ["NHK速報", "戦車部隊が展開しました", "制圧作戦を開始します", "なお死傷者数は不明です"],
+  ["前線レポート", "戦車部隊と交戦中", "……苦戦しているようです", "映像はここで途切れました"],
+  ["官房長官会見", "政府が非常事態宣言を発令", "全国民に冷静な対応を求める", "質問は受け付けません"],
+  ["速報", "ヘリコプター部隊も出動", "多方面からの包囲を試みる", "専門家も困惑の表情"],
+  ["識者コメント", "さらなる進化を確認…", "これは……もう無理では", "スタジオに絶句が広がる"],
+  ["現場映像", "全部隊が壊滅状態…", "包囲網が崩れています", "神に祈るしか……"],
+  ["緊急国会中継", "政府、最終手段を検討", "議場は混乱しています", "総理は沈黙を保っています"],
+  ["大統領声明", "核使用を承認しました", "これが最後の手段です", "国民の皆様、ご武運を"],
+  ["砂嵐", "　", "　", "　"],
+];
+
+function drawTV(now) {
+  if (!tvOn) return;
+  const t = now/1000;
+  const ch = Math.min(newsIdx, TV_CHANNELS.length-1);
+  const lines = TV_CHANNELS[ch];
+  const isSandstorm = ch >= TV_CHANNELS.length-1;
+
+  // TV外枠
+  const tw=480, th=320;
+  const tx=W/2-tw/2, ty=H/2-th/2-20;
+
+  // 外側のフレーム（ブラウン管風）
+  ctx.fillStyle='#1a1a1a';
+  ctx.beginPath();
+  ctx.roundRect(tx-22, ty-22, tw+44, th+44, 18);
+  ctx.fill();
+  ctx.strokeStyle='#333'; ctx.lineWidth=3;
+  ctx.stroke();
+
+  // 画面
+  ctx.fillStyle= isSandstorm ? '#111' : '#001a00';
+  ctx.beginPath();
+  ctx.roundRect(tx, ty, tw, th, 6);
+  ctx.fill();
+
+  if (isSandstorm) {
+    // 砂嵐
+    ctx.save();
+    ctx.beginPath(); ctx.roundRect(tx,ty,tw,th,6); ctx.clip();
+    for (let i=0;i<800;i++) {
+      const nx=(Math.sin(i*127.1+t*83)*0.5+0.5)*tw;
+      const ny=(Math.sin(i*311.7+t*97)*0.5+0.5)*th;
+      ctx.fillStyle=`rgba(255,255,255,${Math.random()*0.4})`;
+      ctx.fillRect(tx+nx,ty+ny,2,2);
+    }
+    ctx.restore();
+    ctx.fillStyle='#ffffff22'; ctx.font='bold 28px monospace';
+    ctx.textAlign='center';
+    ctx.fillText('■ 放送終了 ■',W/2,H/2+14);
+  } else {
+    // スキャンライン風
+    ctx.save();
+    ctx.beginPath(); ctx.roundRect(tx,ty,tw,th,6); ctx.clip();
+    for (let sy=ty;sy<ty+th;sy+=4) {
+      ctx.fillStyle='rgba(0,0,0,0.18)';
+      ctx.fillRect(tx,sy,tw,2);
+    }
+    // ヘッダー
+    ctx.fillStyle='#ff2222';
+    ctx.fillRect(tx, ty, tw, 36);
+    ctx.fillStyle='#ffffff';
+    ctx.font='bold 14px monospace';
+    ctx.textAlign='center';
+    ctx.fillText('◉ LIVE  ' + lines[0], W/2, ty+23);
+
+    // 本文
+    const textLines = lines.slice(1);
+    textLines.forEach((line, i) => {
+      const pulse = i===0 ? (Math.sin(t*4)>0?'#ffffff':'#ffff88') : '#88ff99';
+      ctx.fillStyle=pulse;
+      ctx.font = i===0 ? 'bold 20px monospace' : '15px monospace';
+      ctx.fillText(line, W/2, ty+80+i*38);
+    });
+
+    // スクロールテロップ
+    ctx.fillStyle='#ffff00';
+    ctx.fillRect(tx, ty+th-28, tw, 28);
+    const ticker = '▶ ' + NEWS[newsIdx] + '　　　　';
+    const tickX = ((t*80) % (ticker.length * 9));
+    ctx.fillStyle='#000';
+    ctx.font='bold 12px monospace';
+    ctx.textAlign='left';
+    ctx.fillText(ticker, tx+tw-tickX, ty+th-10);
+    ctx.restore();
+  }
+
+  // TV下部ボタン類（雰囲気）
+  ctx.fillStyle='#222';
+  for (let i=0;i<5;i++) {
+    ctx.beginPath();
+    ctx.arc(tx+60+i*30, ty+th+32, 7, 0, Math.PI*2);
+    ctx.fillStyle= i===0 ? '#882222' : '#333';
+    ctx.fill();
+    ctx.strokeStyle='#555'; ctx.lineWidth=1; ctx.stroke();
+  }
+
+  // 閉じるヒント
+  ctx.fillStyle='#334433'; ctx.font='10px monospace';
+  ctx.textAlign='center';
+  ctx.fillText('[T] または TVボタンで消す', W/2, ty+th+58);
+  ctx.textAlign='left';
 }
 
 function drawHUD() {
@@ -811,6 +1217,19 @@ function drawHUD() {
   ctx.fillStyle='#334a3a'; ctx.font='10px monospace';
   ctx.fillText(`WAVE ${currentWave()+1}`, W-50, 36);
 
+  // [TV] ボタン（右下のモードボタンの右端あたり）
+  const tvBX=14+84*4, tvBY=H-46-36, tvBW=60, tvBH=46;
+  ctx.fillStyle=tvOn?'#22441a':'#0a120a';
+  ctx.fillRect(tvBX,tvBY,tvBW,tvBH);
+  ctx.strokeStyle=tvOn?'#44ff88':'#223322'; ctx.lineWidth=tvOn?2:1;
+  ctx.strokeRect(tvBX,tvBY,tvBW,tvBH);
+  ctx.fillStyle=tvOn?'#44ff88':'#334433';
+  ctx.font='bold 11px monospace'; ctx.textAlign='center';
+  ctx.fillText('📺',tvBX+tvBW/2,tvBY+20);
+  ctx.font='9px monospace';
+  ctx.fillText('[T]TV',tvBX+tvBW/2,tvBY+36);
+  ctx.textAlign='left';
+
   // Bottom stats bar
   ctx.fillStyle='rgba(3,6,9,0.9)'; ctx.fillRect(0,H-28,W,28);
   ctx.fillStyle='#1a3022'; ctx.fillRect(0,H-29,W,1);
@@ -861,11 +1280,38 @@ function drawTitle(now) {
   ctx.fillStyle='#2a4a2a'; ctx.font='11px monospace';
   ctx.fillText('▶ 完全体に到達せずに終わると…？',W/2,H/2+116);
 
-  if (Math.sin(t*3.5)>0) {
-    ctx.shadowColor='#44ff88'; ctx.shadowBlur=15;
-    ctx.fillStyle='#44ff88'; ctx.font='bold 15px monospace';
-    ctx.fillText('[ SPACE ] または [ クリック ] で開始',W/2,H/2+132);
+  // 難易度ボタン
+  const ny = H/2+148;
+  const modes = [
+    { key:'NORMAL', label:'NORMAL', sub:'デスアタッカーなし', col:'#44ff88' },
+    { key:'HARD',   label:'HARD',   sub:'デスアタッカーあり', col:'#ff4444' },
+  ];
+  for (let i=0;i<2;i++) {
+    const mo = modes[i];
+    const bx = i===0 ? W/2-200 : W/2+10;
+    const bw = 190, bh = 44;
+    const active = titleSel===i;
+    ctx.fillStyle = active ? mo.col+'28' : '#0a120a';
+    ctx.fillRect(bx, ny, bw, bh);
+    ctx.strokeStyle = active ? mo.col : '#223322';
+    ctx.lineWidth = active ? 2.5 : 1;
+    ctx.strokeRect(bx, ny, bw, bh);
+    if (active) { ctx.fillStyle=mo.col; ctx.fillRect(bx,ny,3,bh); }
+    ctx.shadowColor = active ? mo.col : 'transparent';
+    ctx.shadowBlur  = active ? 12 : 0;
+    ctx.fillStyle = active ? mo.col : '#445544';
+    ctx.font = `bold 17px monospace`;
+    ctx.textAlign='center';
+    ctx.fillText(mo.label, bx+bw/2, ny+20);
     ctx.shadowBlur=0;
+    ctx.fillStyle = active ? mo.col+'bb' : '#334433';
+    ctx.font = '10px monospace';
+    ctx.fillText(mo.sub, bx+bw/2, ny+36);
+  }
+  ctx.textAlign='center';
+  if (Math.sin(t*3.5)>0) {
+    ctx.fillStyle='#2a4a2a'; ctx.font='11px monospace';
+    ctx.fillText('← → で選択  /  SPACE・クリックで開始',W/2,ny+62);
   }
 
   ctx.textAlign='left';
@@ -1231,14 +1677,158 @@ function drawEnding(now) {
 
 // ─────────────────────── MAIN LOOP ───────────────────────
 
+
+// ─────────────────────── DEBUG OVERLAY ───────────────────────
+
+function drawDebug() {
+  // グリッド描画
+  if (useGrid) {
+    ctx.strokeStyle='rgba(0,255,100,0.12)'; ctx.lineWidth=1;
+    for (let gx=0; gx<=GRID_COLS; gx++) {
+      ctx.beginPath(); ctx.moveTo(gx*CELL_SIZE,0); ctx.lineTo(gx*CELL_SIZE,H); ctx.stroke();
+    }
+    for (let gy=0; gy<=GRID_ROWS; gy++) {
+      ctx.beginPath(); ctx.moveTo(0,gy*CELL_SIZE); ctx.lineTo(W,gy*CELL_SIZE); ctx.stroke();
+    }
+    // セルごとの敵数をヒートマップ表示
+    for (let gy=0; gy<GRID_ROWS; gy++) {
+      for (let gx=0; gx<GRID_COLS; gx++) {
+        const count = grid[gy*GRID_COLS+gx]?.length || 0;
+        if (count>0) {
+          ctx.fillStyle=`rgba(0,255,100,${Math.min(0.35, count*0.07)})`;
+          ctx.fillRect(gx*CELL_SIZE+1, gy*CELL_SIZE+1, CELL_SIZE-2, CELL_SIZE-2);
+          ctx.fillStyle='rgba(0,255,100,0.6)';
+          ctx.font='10px monospace';
+          ctx.fillText(count, gx*CELL_SIZE+4, gy*CELL_SIZE+13);
+        }
+      }
+    }
+  }
+
+  // パネル背景
+  const px=W-280, py=8, pw=272, ph=useGrid?220:200;
+  ctx.fillStyle='rgba(0,0,0,0.82)'; ctx.fillRect(px,py,pw,ph);
+  ctx.strokeStyle='#224422'; ctx.lineWidth=1; ctx.strokeRect(px,py,pw,ph);
+
+  ctx.font='bold 12px monospace';
+  ctx.textAlign='left';
+
+  // FPS
+  const ms  = perf.updateMs;
+  const rms = perf.renderMs;
+  const total = ms + rms;
+  const budget = 1000/60; // 16.7ms
+
+  ctx.fillStyle=perf.fps>=55?'#44ff88':perf.fps>=30?'#ffaa33':'#ff4444';
+  ctx.fillText(`FPS: ${perf.fps}`,px+10,py+18);
+
+  // 処理時間・描画時間
+  ctx.fillStyle=ms<4?'#44ff88':ms<10?'#ffaa33':'#ff4444';
+  ctx.fillText(`更新: ${ms.toFixed(2)} ms  [${useGrid?'グリッド':'全探索'}]`,px+10,py+32);
+  ctx.fillStyle=rms<8?'#44aaff':rms<13?'#ffaa33':'#ff4444';
+  ctx.fillText(`描画: ${rms.toFixed(2)} ms`,px+10,py+46);
+
+  // 予算バーグラフ (幅252px = 16.7ms)
+  const barW = 252, barH = 13, barX = px+10, barY = py+54;
+  ctx.fillStyle='#1a2a1a'; ctx.fillRect(barX, barY, barW, barH);
+  // 更新（緑）
+  const updateW = Math.min(barW, (ms/budget)*barW);
+  ctx.fillStyle='#33aa55'; ctx.fillRect(barX, barY, updateW, barH);
+  // 描画（青）
+  const renderW = Math.min(barW-updateW, (rms/budget)*barW);
+  ctx.fillStyle='#3366ff'; ctx.fillRect(barX+updateW, barY, renderW, barH);
+  // 余裕（暗い）
+  ctx.strokeStyle='#2a4a2a'; ctx.lineWidth=1; ctx.strokeRect(barX, barY, barW, barH);
+  // 60fps限界ライン
+  ctx.strokeStyle='#ff444466'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.moveTo(barX+barW, barY); ctx.lineTo(barX+barW, barY+barH); ctx.stroke();
+  // ラベル
+  ctx.fillStyle='#556655'; ctx.font='9px monospace';
+  ctx.fillText(`0ms`,barX,barY+barH+10);
+  ctx.textAlign='right';
+  ctx.fillText(`16.7ms(60fps限界)`,barX+barW,barY+barH+10);
+  ctx.textAlign='left';
+  ctx.fillStyle='#33aa55'; ctx.fillText('■更新',barX,barY+barH+22);
+  ctx.fillStyle='#3366ff'; ctx.fillText('■描画',barX+45,barY+barH+22);
+  ctx.fillStyle='#445544'; ctx.fillText(`合計: ${total.toFixed(2)}ms (予算の${((total/budget)*100).toFixed(1)}%)`,barX+90,barY+barH+22);
+
+  // オブジェクト数
+  ctx.fillStyle='#aaffcc';
+  ctx.fillText(`弾: ${bullets.length}  敵: ${enemies.length}  粒子: ${particles.length}`,px+10,py+82);
+
+  // 理論上の判定回数（グリッドなし）
+  const theoretical = bullets.length * enemies.length;
+  ctx.fillStyle='#888';
+  ctx.fillText(`理論値 (全探索): ${theoretical.toLocaleString()} 回/f`,px+10,py+100);
+
+  // 直近60fの平均
+  const avgNoGrid = Math.round(perf.histNoGrid.reduce((a,b)=>a+b,0)/60);
+  const avgGrid   = Math.round(perf.histGrid.reduce((a,b)=>a+b,0)/60);
+
+  ctx.fillStyle='#ff8844';
+  const noGridActive = !useGrid;
+  if (noGridActive) ctx.fillStyle='#ffdd44';
+  ctx.fillText(`[OFF] 全探索 実測: ${avgNoGrid.toLocaleString()} 回/f`,px+10,py+118);
+  if (noGridActive) { ctx.fillStyle='#ffdd44'; ctx.fillText('◀ 計測中',px+195,py+118); }
+
+  ctx.fillStyle='#44ffaa';
+  const gridActive = useGrid;
+  if (gridActive) ctx.fillStyle='#ffdd44';
+  ctx.fillText(`[ON]  グリッド実測: ${avgGrid.toLocaleString()} 回/f`,px+10,py+136);
+  if (gridActive) { ctx.fillStyle='#ffdd44'; ctx.fillText('◀ 計測中',px+195,py+136); }
+
+  // 削減率
+  const base = Math.max(avgNoGrid, avgGrid, 1);
+  const reduced = useGrid ? avgNoGrid||theoretical : avgGrid||theoretical;
+  if (avgNoGrid>0 && avgGrid>0) {
+    const ratio = ((1 - avgGrid/avgNoGrid)*100).toFixed(1);
+    ctx.fillStyle= ratio>0 ? '#44ff88':'#ff4444';
+    ctx.fillText(`グリッドで ${ratio>0?'-':''}${Math.abs(ratio)}% の削減`,px+10,py+154);
+  } else {
+    ctx.fillStyle='#556655';
+    ctx.fillText('両モードを交互に試すと比較できます',px+10,py+154);
+  }
+
+  // 操作説明
+  ctx.fillStyle='#334a3a';
+  ctx.fillText(`[G] グリッド: ${useGrid?'ON ':'OFF'}  [F] デバッグ表示`,px+10,py+172);
+  if (useGrid) {
+    ctx.fillStyle='#224a33';
+    ctx.fillText(`セルサイズ: ${CELL_SIZE}px  ${GRID_COLS}×${GRID_ROWS}`,px+10,py+190);
+  }
+
+  ctx.textAlign='left';
+}
+
 function loop(now) {
   const dt=Math.min(now-lastTime,50);
   lastTime=now;
+
+  // FPS計測
+  perf.frameCount++;
+  perf.fpsTimer += dt;
+  if (perf.fpsTimer >= 500) {
+    perf.fps = Math.round(perf.frameCount * 1000 / perf.fpsTimer);
+    perf.frameCount = 0; perf.fpsTimer = 0;
+  }
+
+  const _t0 = performance.now();
   if      (state==='PLAYING')  updatePlaying(now,dt);
   else if (state==='ENDING')   updateEnding();
   else if (state==='HUMANWIN') updateEnding();
   else if (state==='GAMEOVER')  { if(++endTimer>780) state='TITLE'; }
+  perf.histTimeMs[perf.histIdx] = performance.now() - _t0;
+  // updateMsはヒストリ記録後にhistIdxが進む前に集計
+  if (perf.fpsTimer === 0) {  // FPS更新タイミングで平均計算
+    perf.updateMs = perf.histTimeMs.reduce((a,b)=>a+b,0) / 60;
+  }
+  const _r0 = performance.now();
   render(now);
+  perf.histRenderMs[perf.histIdx] = performance.now() - _r0;
+  if (perf.fpsTimer === 0) {
+    perf.renderMs = perf.histRenderMs.reduce((a,b)=>a+b,0) / 60;
+  }
+  if (showDebug && state==='PLAYING') drawDebug();
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
