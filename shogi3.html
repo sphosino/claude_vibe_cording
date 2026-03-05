@@ -301,8 +301,14 @@ function kickAI(){
   const _g=gameGen;
   setTimeout(()=>{
     if(_g!==gameGen||gover) return;
-    const mv=aiMove(turn,board,hand,eliminated);
-    if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
+    try{
+      const mv=aiMove(turn,board,hand,eliminated);
+      if(mv){ applyMove(mv,turn); render(); if(!gover) nextTurn(board); }
+      else { if(!gover) nextTurn(board); } // 手がない場合もスキップして続行
+    }catch(e){
+      console.error('aiMove error:',e);
+      if(!gover) nextTurn(board); // エラー時もゲームを止めない
+    }
   },AI_DELAY_MS);
 }
 function setHumanPlayer(p){
@@ -1034,7 +1040,7 @@ function aiMove(o,bd,hd,elim){
   for(const mv of moves){
     // 即勝ち手（入玉のみ即返し、王取りは評価関数に任せる）
     if(!mv.drop){
-      const cell=board[mv.fr]?.[mv.fc];
+      const cell=bd[mv.fr]?.[mv.fc];
       if(cell?.p==='OU'){
         if(o===1&&mv.tr===8) return mv;
         if(o===2&&mv.tc===0) return mv;
