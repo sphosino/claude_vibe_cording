@@ -238,8 +238,8 @@ let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
 const AI_MOBILITY_SCALE      = 10;   // モビリティ1マスあたりの点数スケール
-const AI_ENTRY_MULT          = 100;   // 入玉距離ボーナス係数
-const AI_KING_SAFETY_MULT      = 200;  // 王の安全度スコア係数（駒1枚分程度の影響力）
+const AI_ENTRY_MULT          = 214;   // 入玉距離ボーナス係数（2段目≒1500点、3段目≒600点）
+const AI_KING_SAFETY_MULT      = 1000; // 王の安全度スコア係数（飛車1枚分程度の影響力）
 const AI_KING_SAFETY_DENOM_EXP = 0.9;  // 安全度分母の指数（広い場所ほど満点が高い）
 const AI_COALITION_THRESHOLD   = 1500; // 連合発動の独走スコア差しきい値
 const AI_COALITION_MULT        = 0.5;  // 連合時の上位プレイヤーへの重み増加量
@@ -282,6 +282,9 @@ if(!CanvasRenderingContext2D.prototype.roundRect){
 
 // ── ユーティリティ ──
 function inB(r,c){return r>=0&&r<9&&c>=0&&c<9;}
+
+let evalStaticCount = 0 //デバッグ用カウント
+
 
 // 各プレイヤーの前進方向に合わせて差分を回転
 function rotDir(dr,dc,o){
@@ -843,6 +846,7 @@ function calcEntryBonus(b, o){
 // 共闘モード: CPU連合 vs 人間 / 人間脱落後 CPU同士
 // 自由対局モード: 各自が全員を敵とする「パラノイド」評価
 function evalStatic(b, h, elim, vp){
+  evalStaticCount++;
   const pieceScore = pieceScores(b,h,[0,1,2]);
   const cpus = [0,1,2].filter(o=>!elim[o]); //プレイヤーの数
   if(cpus.length <= 1){
@@ -1070,8 +1074,10 @@ function kingWouldBeCaptured(bd, o, elim){
 }
 
 function aiMove(o,bd,hd,elim){
-  console.log(`[評価] 青:${(evalStatic(bd,hd,elim,0)).toFixed(0)} 赤:${(evalStatic(bd,hd,elim,1)).toFixed(0)} 緑:${(evalStatic(bd,hd,elim,2)).toFixed(0)}`);
+  evalStaticCount = 0
+  
   let moves=allMovesOn(bd,hd,o,elim);
+
   if(!moves.length) return null;
 
   const boardMvTop = moves.filter(m => !m.drop);
@@ -1100,6 +1106,7 @@ function aiMove(o,bd,hd,elim){
     if(v>bestScore){bestScore=v;best=mv;}
   }
 
+console.log(`[評価] 青:${(evalStatic(bd,hd,elim,0)).toFixed(0)} 赤:${(evalStatic(bd,hd,elim,1)).toFixed(0)} 緑:${(evalStatic(bd,hd,elim,2)).toFixed(0)}  評価回数:${evalStaticCount}`);
   return best;
 }
 
