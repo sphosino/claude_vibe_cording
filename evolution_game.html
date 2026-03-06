@@ -54,9 +54,9 @@ function toGameXY(clientX, clientY) {
 // ═══════════════════════════════════════════════════════
 const B = {
   // ── プレイヤー初期値 ──────────────────────────────────
-  PLAYER_HP:          130,   // 初期HP
+  PLAYER_HP:          200,   // 初期HP
   PLAYER_SPD:         2.8,   // 初期移動速度
-  PLAYER_BULLET:      6,     // 初期弾数
+  PLAYER_BULLET:      7,     // 初期弾数
   PLAYER_FIRE_RATE:   880,   // 初期連射間隔(ms)　小さいほど速い
 
   // ── プレイヤー強化上限 ────────────────────────────────
@@ -73,7 +73,7 @@ const B = {
   ITEM_HEAL_AMT:      30,    // HP回復量
 
   // ── アイテムドロップ ──────────────────────────────────
-  ITEM_DROP_RATE:     0.26,  // ドロップ確率 (0〜1)
+  ITEM_DROP_RATE:     0.38,  // ドロップ確率 (0〜1)
   ITEM_LIFETIME:      380,   // アイテム消えるまでのフレーム数
 
   // ── 敵スポーン ────────────────────────────────────────
@@ -141,9 +141,32 @@ const NEWS = [
   '【速報】生命体、さらなる進化を確認——識者は絶句',
   '【緊急】全部隊が壊滅状態——包囲網が崩れつつある',
   '【速報】政府、最終手段を検討中',
-  '【警告】核使用を大統領が承認',
-  '【警告】核攻撃まで60秒  繰り返す  核攻撃まで60秒',
+  '【警告】兵器使用を大統領が承認——発射まで間もなく',
+  '【警告】攻撃まで60秒  繰り返す  攻撃まで60秒',
 ];
+
+// 進化ステージ別の「最終兵器」テキスト（newsIdx>=12 で使用）
+const NEWS_WEAPON = [
+  // evoStage 0,1（初期〜変異）: 通常兵器で十分と判断
+  ['【速報】トマホーク巡航ミサイルを発射——精密爆撃を実施',
+   '【速報】トマホーク攻撃60秒前  精密誘導により被害は最小限の見込み'],
+  // evoStage 2（怪物体）: より強力な通常兵器
+  ['【警告】バンカーバスター大型爆弾の投下を決定——撃滅を目指す',
+   '【警告】大型爆弾投下60秒前  周辺住民は直ちに避難してください'],
+  // evoStage 3（完全体）: 核しかない
+  ['【警告】核使用を大統領が承認——完全体には通常兵器が通じない',
+   '【警告】核攻撃まで60秒  繰り返す  核攻撃まで60秒'],
+];
+
+function getNewsText() {
+  if (newsIdx >= 12) {
+    const stage = Math.min(player.evoStage, 2); // 0,1→0, 2→1, 3→2
+    const weaponIdx = player.evoStage >= 3 ? 2 : player.evoStage >= 2 ? 1 : 0;
+    const lineIdx = newsIdx - 12; // 0 or 1
+    return NEWS_WEAPON[weaponIdx][lineIdx] || NEWS_WEAPON[weaponIdx][0];
+  }
+  return NEWS[newsIdx];
+}
 
 // ─────────────────────── STATE ───────────────────────
 
@@ -157,6 +180,13 @@ let lastTime = 0;
 let spawnTimer = 0;
 let newsIdx  = 0;
 let tvOn     = false;  // TVオン/オフ
+let tvX      = -1;     // TV左上X（-1=初期化前）
+let tvY      = -1;     // TV左上Y
+const TV_W   = 400+44; // TVフレーム込みの幅
+const TV_H   = 270+44; // TVフレーム込みの高さ
+let tvDrag   = false;  // ドラッグ中フラグ
+let tvDragOX = 0;      // ドラッグ開始オフセット
+let tvDragOY = 0;
 
 const player = {
   x:0, y:0, hp:B.PLAYER_HP, maxHp:B.PLAYER_HP, spd:B.PLAYER_SPD,
@@ -277,7 +307,10 @@ window.addEventListener('keydown', e => {
     if (e.code==='Digit4'||e.code==='KeyM') player.mode='MIXED';
     if (e.code==='KeyG') { useGrid=!useGrid; }
     if (e.code==='KeyF') { showDebug=!showDebug; }
-    if (e.code==='KeyT') { tvOn=!tvOn; }
+    if (e.code==='KeyT') {
+      tvOn=!tvOn;
+      if (tvOn && tvX<0) { tvX=W/2-TV_W/2; tvY=H/2-TV_H/2-20; }
+    }
   }
 });
 window.addEventListener('keyup', e => { keys[e.code]=false; });
@@ -291,10 +324,10 @@ canvas.addEventListener('click', e => {
 
   if (state==='TITLE') {
     // 難易度ボタン判定
-    const ny = H/2 + 148;
-    if (cy >= ny && cy <= ny+44) {
-      if (cx >= W/2-200 && cx <= W/2-10)  { difficulty='NORMAL'; startGame(); return; }
-      if (cx >= W/2+10  && cx <= W/2+200) { difficulty='HARD';   startGame(); return; }
+    const ny = H/2 + 152;
+    if (cy >= ny && cy <= ny+58) {
+      if (cx >= W/2-220 && cx <= W/2-10)  { difficulty='NORMAL'; startGame(); return; }
+      if (cx >= W/2+10  && cx <= W/2+220) { difficulty='HARD';   startGame(); return; }
     }
     return;
   }
@@ -303,7 +336,11 @@ canvas.addEventListener('click', e => {
 
   // TVボタン判定
   const tvBX2=14+84*4, tvBY2=H-46-36;
-  if (cx>=tvBX2 && cx<=tvBX2+60 && cy>=tvBY2 && cy<=tvBY2+46) { tvOn=!tvOn; return; }
+  if (cx>=tvBX2 && cx<=tvBX2+60 && cy>=tvBY2 && cy<=tvBY2+46) {
+    tvOn=!tvOn;
+    if (tvOn && tvX<0) { tvX=W/2-TV_W/2; tvY=H/2-TV_H/2-20; }
+    return;
+  }
 
   // モードボタン判定 — 左下 (y: H-BH-36 〜 H-36, 幅78, gap84)
   const BW=78, BH=46, BGAP=84, BY=H-BH-36;
@@ -318,10 +355,31 @@ canvas.addEventListener('click', e => {
   mouseTgt = {x:cx, y:cy};
 });
 
+
+// TV ドラッグ
+canvas.addEventListener('mousedown', e => {
+  if (!tvOn || state!=='PLAYING') return;
+  const {x:cx, y:cy} = toGameXY(e.clientX, e.clientY);
+  // TV全体をつかめる
+  if (cx>=tvX && cx<=tvX+TV_W && cy>=tvY && cy<=tvY+TV_H) {
+    tvDrag=true; tvDragOX=cx-tvX; tvDragOY=cy-tvY;
+    e.preventDefault();
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if (!tvDrag) return;
+  const {x:cx, y:cy} = toGameXY(e.clientX, e.clientY);
+  tvX = Math.max(0, Math.min(W-TV_W, cx-tvDragOX));
+  tvY = Math.max(0, Math.min(H-TV_H, cy-tvDragOY));
+});
+canvas.addEventListener('mouseup', () => { tvDrag=false; });
+canvas.addEventListener('mouseleave', () => { tvDrag=false; });
+
 // ─────────────────────── GAME LOGIC ───────────────────────
 
 function startGame() {
   state='PLAYING'; score=0; elapsed=0; endTimer=0; newsIdx=0;
+  tvOn=false;  // ゲーム開始時は必ず閉じる
   bullets=[]; enemies=[]; items=[]; particles=[]; floatMsgs=[];
   spawnTimer=0;
   Object.assign(player, {
@@ -1041,7 +1099,7 @@ const TV_CHANNELS = [
   ["識者コメント", "さらなる進化を確認…", "これは……もう無理では", "スタジオに絶句が広がる"],
   ["現場映像", "全部隊が壊滅状態…", "包囲網が崩れています", "神に祈るしか……"],
   ["緊急国会中継", "政府、最終手段を検討", "議場は混乱しています", "総理は沈黙を保っています"],
-  ["大統領声明", "核使用を承認しました", "これが最後の手段です", "国民の皆様、ご武運を"],
+  ["大統領声明", "兵器使用を承認", "——発射まで間もなく", "国民の皆様、ご武運を"],
   ["砂嵐", "　", "　", "　"],
 ];
 
@@ -1053,8 +1111,9 @@ function drawTV(now) {
   const isSandstorm = ch >= TV_CHANNELS.length-1;
 
   // TV外枠
-  const tw=480, th=320;
-  const tx=W/2-tw/2, ty=H/2-th/2-20;
+  const tw=400, th=270;
+  if (tvX<0) { tvX=W/2-TV_W/2; tvY=H/2-TV_H/2-20; }
+  const tx=tvX+22, ty=tvY+22;
 
   // 外側のフレーム（ブラウン管風）
   ctx.fillStyle='#1a1a1a';
@@ -1063,6 +1122,12 @@ function drawTV(now) {
   ctx.fill();
   ctx.strokeStyle='#333'; ctx.lineWidth=3;
   ctx.stroke();
+  // つかむエリアのヒント（上部グリップ）
+  ctx.fillStyle= tvDrag ? '#334' : '#252525';
+  ctx.beginPath(); ctx.roundRect(tx-22, ty-22, tw+44, 22, [18,18,0,0]); ctx.fill();
+  ctx.fillStyle='#444'; ctx.font='10px monospace'; ctx.textAlign='center';
+  ctx.fillText('⠿ つかんで移動', tx+tw/2, ty-7);
+  ctx.textAlign='left';
 
   // 画面
   ctx.fillStyle= isSandstorm ? '#111' : '#001a00';
@@ -1098,26 +1163,102 @@ function drawTV(now) {
     ctx.fillStyle='#ffffff';
     ctx.font='bold 14px monospace';
     ctx.textAlign='center';
-    ctx.fillText('◉ LIVE  ' + lines[0], W/2, ty+23);
+    // idx12以降は進化ステージで内容が変わる
+    let displayLines = lines;
+    if (ch === 12) {
+      const wIdx = player.evoStage >= 3 ? 2 : player.evoStage >= 2 ? 1 : 0;
+      const wContents = [
+        ["米軍発表", "トマホーク巡航ミサイル発射", "精密爆撃により撃滅する", "周辺住民は避難してください"],
+        ["国防総省", "バンカーバスター投下を決定", "怪物体には大型爆弾で対応", "これで終わらせる"],
+        ["大統領声明", "核使用を承認しました", "完全体には核しかない…", "国民の皆様、ご武運を"],
+      ];
+      displayLines = wContents[wIdx];
+    }
+    ctx.fillText('◉ LIVE  ' + displayLines[0], tx+tw/2, ty+23);
 
-    // 本文
-    const textLines = lines.slice(1);
+    // ── 棒人間アナウンサー ──
+    const ax = tx+58, ay = ty+168; // アナウンサーの中心
+    const panic = newsIdx >= 9;    // 後半はパニックモード
+    const armSwing = Math.sin(t * (panic?12:3)) * (panic?0.8:0.3);
+    const headBob  = Math.sin(t * (panic?8:2)) * (panic?3:1);
+    ctx.strokeStyle='#88ff99'; ctx.lineWidth=2.5; ctx.lineCap='round';
+    ctx.shadowColor='#44ff44'; ctx.shadowBlur=6;
+    // 頭
+    ctx.beginPath(); ctx.arc(ax, ay-52+headBob, 13, 0, Math.PI*2); ctx.stroke();
+    // 体
+    ctx.beginPath(); ctx.moveTo(ax, ay-39+headBob); ctx.lineTo(ax, ay-10); ctx.stroke();
+    // 左腕（マイク持ち）
+    ctx.beginPath();
+    ctx.moveTo(ax, ay-32);
+    ctx.lineTo(ax-18+Math.cos(armSwing)*8, ay-18+Math.sin(armSwing)*6);
+    ctx.stroke();
+    // マイク
+    ctx.fillStyle='#aaffaa';
+    ctx.fillRect(ax-22+Math.cos(armSwing)*8, ay-22+Math.sin(armSwing)*6, 5, 9);
+    // 右腕（パニック時は上に上がる）
+    ctx.beginPath();
+    ctx.moveTo(ax, ay-32);
+    ctx.lineTo(ax+18, ay-18 + (panic ? -18+Math.sin(t*11)*10 : Math.sin(armSwing+1)*6));
+    ctx.stroke();
+    // 左脚
+    ctx.beginPath();
+    ctx.moveTo(ax, ay-10);
+    ctx.lineTo(ax-10, ay+16);
+    ctx.stroke();
+    // 右脚
+    ctx.beginPath();
+    ctx.moveTo(ax, ay-10);
+    ctx.lineTo(ax+10+Math.sin(t*(panic?9:2))*4, ay+16);
+    ctx.stroke();
+    // 顔（後半は泣き顔）
+    ctx.strokeStyle='#88ff99'; ctx.lineWidth=1.5;
+    if (panic) {
+      // 泣き顔
+      ctx.beginPath(); ctx.arc(ax-5, ay-55+headBob, 2, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ax+5, ay-55+headBob, 2, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ax, ay-48+headBob, 6, 0, Math.PI); ctx.stroke(); // 口（逆弧）
+      // 涙
+      ctx.fillStyle='#aaffff';
+      ctx.beginPath(); ctx.ellipse(ax-5, ay-48+headBob, 2, 4, 0, 0, Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(ax+5, ay-48+headBob, 2, 4, 0, 0, Math.PI*2); ctx.fill();
+    } else {
+      // 普通顔
+      ctx.beginPath(); ctx.arc(ax-5, ay-55+headBob, 2, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ax+5, ay-55+headBob, 2, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ax, ay-50+headBob, 5, 0.2, Math.PI-0.2); ctx.stroke();
+    }
+    // デスク
+    ctx.strokeStyle='#226622'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(tx+8, ay+18); ctx.lineTo(ax+70, ay+18); ctx.stroke();
+    ctx.fillStyle='#112211';
+    ctx.fillRect(tx+8, ay+18, 60+70, 6);
+
+    ctx.shadowBlur=0;
+
+    // 本文（アナウンサーの右側）
+    const textLines = (typeof displayLines!=='undefined'?displayLines:lines).slice(1);
     textLines.forEach((line, i) => {
       const pulse = i===0 ? (Math.sin(t*4)>0?'#ffffff':'#ffff88') : '#88ff99';
       ctx.fillStyle=pulse;
-      ctx.font = i===0 ? 'bold 20px monospace' : '15px monospace';
-      ctx.fillText(line, W/2, ty+80+i*38);
+      ctx.font = i===0 ? 'bold 17px monospace' : '13px monospace';
+      ctx.textAlign='left';
+      ctx.fillText(line, tx+122, ty+72+i*34);
     });
 
     // スクロールテロップ
     ctx.fillStyle='#ffff00';
     ctx.fillRect(tx, ty+th-28, tw, 28);
-    const ticker = '▶ ' + NEWS[newsIdx] + '　　　　';
-    const tickX = ((t*80) % (ticker.length * 9));
-    ctx.fillStyle='#000';
+    ctx.save();
+    ctx.beginPath(); ctx.rect(tx, ty+th-28, tw, 28); ctx.clip(); // テロップ枠でクリップ
+    const ticker = '▶ ' + getNewsText() + '        ';
     ctx.font='bold 12px monospace';
+    const tickW = ctx.measureText(ticker).width;
+    const tickTotal = tw + tickW;
+    const tickX = (t * 80) % tickTotal;
+    ctx.fillStyle='#000';
     ctx.textAlign='left';
-    ctx.fillText(ticker, tx+tw-tickX, ty+th-10);
+    ctx.fillText(ticker, tx + tw - tickX, ty+th-10);
+    ctx.restore();
     ctx.restore();
   }
 
@@ -1218,17 +1359,26 @@ function drawHUD() {
   ctx.fillText(`WAVE ${currentWave()+1}`, W-50, 36);
 
   // [TV] ボタン（右下のモードボタンの右端あたり）
-  const tvBX=14+84*4, tvBY=H-46-36, tvBW=60, tvBH=46;
-  ctx.fillStyle=tvOn?'#22441a':'#0a120a';
-  ctx.fillRect(tvBX,tvBY,tvBW,tvBH);
-  ctx.strokeStyle=tvOn?'#44ff88':'#223322'; ctx.lineWidth=tvOn?2:1;
-  ctx.strokeRect(tvBX,tvBY,tvBW,tvBH);
-  ctx.fillStyle=tvOn?'#44ff88':'#334433';
-  ctx.font='bold 11px monospace'; ctx.textAlign='center';
-  ctx.fillText('📺',tvBX+tvBW/2,tvBY+20);
-  ctx.font='9px monospace';
-  ctx.fillText('[T]TV',tvBX+tvBW/2,tvBY+36);
-  ctx.textAlign='left';
+  const tvBX=14+84*4, tvBY=H-54-36, tvBW=72, tvBH=54;
+  // グロー効果
+  ctx.shadowColor= tvOn ? '#44ff88' : '#aaffcc';
+  ctx.shadowBlur = tvOn ? 18 : 8;
+  ctx.fillStyle  = tvOn ? '#1a3a1a' : '#0d1f10';
+  ctx.fillRect(tvBX, tvBY, tvBW, tvBH);
+  ctx.shadowBlur=0;
+  ctx.strokeStyle= tvOn ? '#44ff88' : '#44aa66';
+  ctx.lineWidth  = tvOn ? 2.5 : 1.5;
+  ctx.strokeRect(tvBX, tvBY, tvBW, tvBH);
+  // 左端ハイライト
+  ctx.fillStyle = tvOn ? '#44ff88' : '#338855';
+  ctx.fillRect(tvBX, tvBY, 3, tvBH);
+  // 絵文字と文字
+  ctx.font='20px monospace'; ctx.textAlign='center';
+  ctx.fillText('📺', tvBX+tvBW/2, tvBY+28);
+  ctx.fillStyle = tvOn ? '#44ff88' : '#55cc88';
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText(tvOn ? '■ ON' : '[T] TV', tvBX+tvBW/2, tvBY+45);
+  ctx.textAlign='left'; ctx.shadowBlur=0;
 
   // Bottom stats bar
   ctx.fillStyle='rgba(3,6,9,0.9)'; ctx.fillRect(0,H-28,W,28);
@@ -1237,7 +1387,7 @@ function drawHUD() {
   ctx.fillStyle='#ff4444'; ctx.font='bold 11px monospace';
   ctx.fillText('NEWS▶',8,H-10);
   ctx.fillStyle='#ffbbbb'; ctx.font='11px monospace';
-  ctx.fillText(NEWS[newsIdx],68,H-10);
+  ctx.fillText(getNewsText(),68,H-10);
 
   // Mini stats
   ctx.fillStyle='#33664a'; ctx.font='10px monospace';
@@ -1268,50 +1418,58 @@ function drawTitle(now) {
   ctx.fillText('— Not Only Human —',W/2,H/2-48);
 
   ctx.shadowBlur=0;
-  ctx.fillStyle='#3a5a42'; ctx.font='15px monospace';
+  ctx.fillStyle='#88ffaa'; ctx.font='16px monospace';
   ctx.fillText('「進化するのは人間共だけではない」',W/2,H/2+5);
 
-  ctx.fillStyle='#223322'; ctx.font='12px monospace';
-  ctx.fillText('移動: WASD / 矢印キー',W/2,H/2+42);
-  ctx.fillText('弾モード: [1]赤弾  [2]青弾  [3]緑弾  [M]ミックス',W/2,H/2+62);
-  ctx.fillStyle='#1a2a1a'; ctx.font='11px monospace';
-  ctx.fillText('赤弾→緑の敵に強い  青弾→赤の敵に強い  緑弾→青の敵に強い',W/2,H/2+82);
-  ctx.fillText('弱点属性でダメージ2.5倍・スコア2倍！',W/2,H/2+98);
-  ctx.fillStyle='#2a4a2a'; ctx.font='11px monospace';
-  ctx.fillText('▶ 完全体に到達せずに終わると…？',W/2,H/2+116);
+  // 操作説明ブロック
+  const bx=W/2-240, by=H/2+22, bw=480, bh=112;
+  ctx.fillStyle='rgba(0,30,10,0.85)'; ctx.fillRect(bx,by,bw,bh);
+  ctx.strokeStyle='#335544'; ctx.lineWidth=1.5; ctx.strokeRect(bx,by,bw,bh);
+
+  ctx.fillStyle='#ccffdd'; ctx.font='bold 15px monospace';
+  ctx.fillText('移動: WASD / 矢印キー',W/2,H/2+44);
+  ctx.fillText('弾モード: [1]赤弾  [2]青弾  [3]緑弾  [M]ミックス',W/2,H/2+64);
+  ctx.fillStyle='#99ddbb'; ctx.font='14px monospace';
+  ctx.fillText('赤弾→緑の敵に強い  青弾→赤の敵に強い  緑弾→青の敵に強い',W/2,H/2+84);
+  ctx.fillText('弱点属性でダメージ2.5倍・スコア2倍！',W/2,H/2+102);
+
+  ctx.shadowColor='#44ff88'; ctx.shadowBlur=10;
+  ctx.fillStyle='#88ffaa'; ctx.font='bold 14px monospace';
+  ctx.fillText('▶ 完全体に到達せずに終わると…？',W/2,H/2+126);
+  ctx.shadowBlur=0;
 
   // 難易度ボタン
-  const ny = H/2+148;
+  const ny = H/2+152;
   const modes = [
     { key:'NORMAL', label:'NORMAL', sub:'デスアタッカーなし', col:'#44ff88' },
     { key:'HARD',   label:'HARD',   sub:'デスアタッカーあり', col:'#ff4444' },
   ];
   for (let i=0;i<2;i++) {
     const mo = modes[i];
-    const bx = i===0 ? W/2-200 : W/2+10;
-    const bw = 190, bh = 44;
+    const bx = i===0 ? W/2-220 : W/2+10;
+    const bw = 210, bh = 58;
     const active = titleSel===i;
-    ctx.fillStyle = active ? mo.col+'28' : '#0a120a';
+    ctx.fillStyle = active ? mo.col+'28' : '#0a150a';
     ctx.fillRect(bx, ny, bw, bh);
-    ctx.strokeStyle = active ? mo.col : '#223322';
-    ctx.lineWidth = active ? 2.5 : 1;
+    ctx.strokeStyle = active ? mo.col : '#335533';
+    ctx.lineWidth = active ? 2.5 : 1.5;
     ctx.strokeRect(bx, ny, bw, bh);
-    if (active) { ctx.fillStyle=mo.col; ctx.fillRect(bx,ny,3,bh); }
+    if (active) { ctx.fillStyle=mo.col; ctx.fillRect(bx,ny,4,bh); }
     ctx.shadowColor = active ? mo.col : 'transparent';
-    ctx.shadowBlur  = active ? 12 : 0;
-    ctx.fillStyle = active ? mo.col : '#445544';
-    ctx.font = `bold 17px monospace`;
+    ctx.shadowBlur  = active ? 16 : 0;
+    ctx.fillStyle = active ? mo.col : '#88aa88';
+    ctx.font = `bold 22px monospace`;
     ctx.textAlign='center';
-    ctx.fillText(mo.label, bx+bw/2, ny+20);
+    ctx.fillText(mo.label, bx+bw/2, ny+28);
     ctx.shadowBlur=0;
-    ctx.fillStyle = active ? mo.col+'bb' : '#334433';
-    ctx.font = '10px monospace';
-    ctx.fillText(mo.sub, bx+bw/2, ny+36);
+    ctx.fillStyle = active ? mo.col+'cc' : '#669966';
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText(mo.sub, bx+bw/2, ny+47);
   }
   ctx.textAlign='center';
   if (Math.sin(t*3.5)>0) {
-    ctx.fillStyle='#2a4a2a'; ctx.font='11px monospace';
-    ctx.fillText('← → で選択  /  SPACE・クリックで開始',W/2,ny+62);
+    ctx.fillStyle='#88aa88'; ctx.font='bold 13px monospace';
+    ctx.fillText('← → で選択  /  SPACE・クリックで開始',W/2,ny+76);
   }
 
   ctx.textAlign='left';
@@ -1466,9 +1624,19 @@ function drawHumanWin(now) {
       ctx.fillText(`到達進化段階: ${EVO_LABEL[player.evoStage]}  /  生存時間: ${mm2}:${ss2}`, W/2, H/2+128);
       ctx.fillText(`FINAL SCORE: ${score}`, W/2, H/2+152);
     }
+    if (ph>260) {
+      const weaponName = player.evoStage >= 2 ? 'バンカーバスター大型爆弾' : 'トマホーク巡航ミサイル';
+      const weaponCol  = player.evoStage >= 2 ? '#ff8844' : '#44ddff';
+      ctx.fillStyle='#556677'; ctx.font='13px monospace';
+      ctx.fillText('人類が使用した最終兵器：', W/2, H/2+180);
+      ctx.shadowColor=weaponCol; ctx.shadowBlur=14;
+      ctx.fillStyle=weaponCol; ctx.font='bold 17px monospace';
+      ctx.fillText(`🚀 ${weaponName}`, W/2, H/2+204);
+      ctx.shadowBlur=0;
+    }
     if (ph>290 && Math.sin(ph*0.1)>0) {
       ctx.fillStyle='#445566'; ctx.font='12px monospace';
-      ctx.fillText('[ SPACE ] でタイトルへ', W/2, H/2+192);
+      ctx.fillText('[ SPACE ] でタイトルへ', W/2, H/2+232);
     }
     ctx.textAlign='left'; ctx.shadowBlur=0;
 
