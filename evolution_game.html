@@ -111,12 +111,18 @@ const B = {
 
 // ─────────────────────── DATA TABLES ───────────────────────
 
+// ─────────────────────── BULLET TABLE ─────────────────────────
+//  RED  : 高ダメージ＋ノックバック＆スタン  弱点: 緑の敵
+//  BLUE : 貫通弾・連射向き                  弱点: 赤の敵
+//  GREEN: 爆発弾・範囲攻撃                  弱点: 青の敵
 const BULLET = {
   RED:   { color:'#ff3333', glow:'#ff0000', dmg:22, spd:7.5, sz:5,  pierce:false, explode:false, stun:true },
   BLUE:  { color:'#33aaff', glow:'#0066ff', dmg:11, spd:8.5, sz:4,  pierce:true,  explode:false },
   GREEN: { color:'#33ff77', glow:'#00ff44', dmg:9,  spd:4.5, sz:6,  pierce:false, explode:true  },
 };
-// enemy.weakTo === bullet type → 2.5× damage
+// ─────────────────────── ENEMY TABLE ──────────────────────────
+//  weakTo: その属性弾でダメージ2.5倍・スコア2倍
+//  minWave: 出現開始Wave (0=最初から / 4=最終盤のみ)
 const ENEMY = {
   INFANTRY: { col:'#ff5566', name:'歩兵',   hp:45,  spd:0.58, sz:14, score:10, weakTo:'BLUE',  minWave:0 },
   BIKE:     { col:'#5577ff', name:'バイク', hp:30,  spd:1.45, sz:11, score:20, weakTo:'GREEN', minWave:1 },
@@ -424,7 +430,7 @@ function killEnemy(e, idx) {
     e.hp = 1;  // 死なないようにHP残す（デスダッシュ中は弾に当たらない）
     // 現在の向きor最後のダッシュ方向で爆走
     const ang = Math.atan2(player.y - e.y, player.x - e.x);
-    const speed = e.spd * 5;  // デスダッシュ速度
+    const speed = e.spd * B.RUSHER_DEATH_SPD;
     e.dashVx = Math.cos(ang) * speed;
     e.dashVy = Math.sin(ang) * speed;
     e.dashing = true;
@@ -663,7 +669,7 @@ function updatePlaying(now, dt) {
         const _dr=e.sz+18;
         if (!e.deathHit && (player.x-e.x)*(player.x-e.x)+(player.y-e.y)*(player.y-e.y)<_dr*_dr) {
           e.deathHit = true;  // 以降ヒットしない
-          player.hp -= B.CONTACT_DMG * 1.5;  // 1回だけなのでそこそこ痛い
+          player.hp -= B.CONTACT_DMG * B.RUSHER_DEATH_DMG;
           player.invincible = B.INVINCIBLE_FRAMES;
           sfxDamage();
           spawnParticles(player.x, player.y, 14, '#ff6600');
@@ -691,7 +697,7 @@ function updatePlaying(now, dt) {
         e.dashDur = (e.dashDur||0) - 1;
         if (e.dashDur <= 0) {
           e.dashing = false;
-          e.dashTimer = 180 + Math.floor(Math.random()*120); // 次のダッシュまで3〜5秒
+          e.dashTimer = B.RUSHER_COOLDOWN + Math.floor(Math.random()*B.RUSHER_COOLDOWN_RND);
         }
         // ダッシュ中の残像パーティクル
         if (Math.random()<0.4) spawnParticles(e.x, e.y, 1, '#ff8800');
@@ -702,14 +708,14 @@ function updatePlaying(now, dt) {
 
       } else if (e.dashTimer <= 0) {
         // チャージ開始
-        e.chargeTimer = 80; // 約1.3秒チャージ（長めに）
-        e.dashVx = (dx/dist) * (e.spd * 7.0);
-        e.dashVy = (dy/dist) * (e.spd * 7.0);
+        e.chargeTimer = B.RUSHER_CHARGE_F;
+        e.dashVx = (dx/dist) * (e.spd * B.RUSHER_DASH_SPD);
+        e.dashVy = (dy/dist) * (e.spd * B.RUSHER_DASH_SPD);
 
       } else if (e.chargeTimer === 0) {
         // ダッシュ発射！
         e.dashing = true;
-        e.dashDur = 28;
+        e.dashDur = B.RUSHER_DASH_DUR;
         playTone(180,'sawtooth',0.05,0.08,80);
 
       } else {
@@ -1618,7 +1624,7 @@ function drawHumanWin(now) {
       ctx.fillText('おめでとう！　完全体には至らなかった！', W/2, H/2+96);
     }
     if (ph>210) {
-      ctx.fillStyle='#88bbff'; ctx.font='14px monospace';
+      ctx.fillStyle='#aaccff'; ctx.font='bold 16px monospace';
       const mm2=Math.floor(elapsed/60).toString().padStart(2,'0');
       const ss2=Math.floor(elapsed%60).toString().padStart(2,'0');
       ctx.fillText(`到達進化段階: ${EVO_LABEL[player.evoStage]}  /  生存時間: ${mm2}:${ss2}`, W/2, H/2+128);
@@ -1627,7 +1633,7 @@ function drawHumanWin(now) {
     if (ph>260) {
       const weaponName = player.evoStage >= 2 ? 'バンカーバスター大型爆弾' : 'トマホーク巡航ミサイル';
       const weaponCol  = player.evoStage >= 2 ? '#ff8844' : '#44ddff';
-      ctx.fillStyle='#556677'; ctx.font='13px monospace';
+      ctx.fillStyle='#aabbcc'; ctx.font='bold 15px monospace';
       ctx.fillText('人類が使用した最終兵器：', W/2, H/2+180);
       ctx.shadowColor=weaponCol; ctx.shadowBlur=14;
       ctx.fillStyle=weaponCol; ctx.font='bold 17px monospace';
@@ -1635,7 +1641,7 @@ function drawHumanWin(now) {
       ctx.shadowBlur=0;
     }
     if (ph>290 && Math.sin(ph*0.1)>0) {
-      ctx.fillStyle='#445566'; ctx.font='12px monospace';
+      ctx.fillStyle='#aabbcc'; ctx.font='bold 15px monospace';
       ctx.fillText('[ SPACE ] でタイトルへ', W/2, H/2+232);
     }
     ctx.textAlign='left'; ctx.shadowBlur=0;
@@ -1693,8 +1699,8 @@ function drawGameOver() {
     if (ph>10) {
       ctx.globalAlpha=Math.min(1,(ph-10)/35);
       ctx.shadowColor='#33ff77'; ctx.shadowBlur=18;
-      ctx.fillStyle='#55bb77';
-      ctx.font=`${Math.min(14,W/80)}px monospace`;
+      ctx.fillStyle='#88ccaa';
+      ctx.font=`${Math.min(16,W/70)}px monospace`;
       ctx.fillText('— R E Q U I E M —',W/2,H/2-130);
       ctx.shadowBlur=0; ctx.globalAlpha=1;
     }
@@ -1710,8 +1716,8 @@ function drawGameOver() {
     // 弔いの言葉（ランダム）
     if (ph>110) {
       ctx.globalAlpha=Math.min(1,(ph-110)/50);
-      ctx.fillStyle='#557755';
-      ctx.font=`${Math.min(18,W/55)}px monospace`;
+      ctx.fillStyle='#88bb99';
+      ctx.font=`${Math.min(20,W/50)}px monospace`;
       const msg=ELEGY[Math.floor(score/100+player.evoStage)%ELEGY.length];
       ctx.fillText(msg,W/2,H/2-20);
       ctx.globalAlpha=1;
@@ -1722,7 +1728,7 @@ function drawGameOver() {
       ctx.globalAlpha=Math.min(1,(ph-175)/40);
       const mm2=Math.floor(elapsed/60).toString().padStart(2,'0');
       const ss2=Math.floor(elapsed%60).toString().padStart(2,'0');
-      ctx.fillStyle='#334a3a'; ctx.font='13px monospace';
+      ctx.fillStyle='#88bbaa'; ctx.font='bold 15px monospace';
       ctx.fillText(`進化段階: ${EVO_LABEL[player.evoStage]}　生存時間: ${mm2}:${ss2}`,W/2,H/2+55);
       ctx.fillText(`SCORE: ${score}`,W/2,H/2+80);
       ctx.globalAlpha=1;
@@ -1741,15 +1747,15 @@ function drawGameOver() {
       ctx.fillStyle='#1a2a1a'; ctx.fillRect(W/2-gw/2,H/2+102,gw,8);
       ctx.fillStyle='#33664a'; ctx.fillRect(W/2-gw/2,H/2+102,gw*evoProgress,8);
       ctx.strokeStyle='#2a4a32'; ctx.lineWidth=1; ctx.strokeRect(W/2-gw/2,H/2+102,gw,8);
-      ctx.fillStyle='#334a3a'; ctx.font='10px monospace';
-      ctx.fillText(`完全体まで ${Math.round((1-evoProgress)*100)}% 足りなかった`,W/2,H/2+122);
+      ctx.fillStyle='#88bbaa'; ctx.font='13px monospace';
+      ctx.fillText(`完全体まで ${Math.round((1-evoProgress)*100)}% 足りなかった`,W/2,H/2+124);
       ctx.globalAlpha=1;
     }
 
     // タイトルへ
     if (ph>310 && Math.sin(ph*0.09)>0) {
-      ctx.fillStyle='#223322'; ctx.font='12px monospace';
-      ctx.fillText('[ SPACE ] で再挑戦',W/2,H/2+158);
+      ctx.fillStyle='#aaccaa'; ctx.font='bold 15px monospace';
+      ctx.fillText('[ SPACE ] で再挑戦',W/2,H/2+160);
     }
   }
   ctx.textAlign='left'; ctx.shadowBlur=0; ctx.globalAlpha=1;
@@ -1830,12 +1836,12 @@ function drawEnding(now) {
       ctx.fillText('BAD END',W/2,H/2-28);
       ctx.shadowBlur=0; ctx.fillStyle='#55aa77'; ctx.font='20px monospace';
       ctx.fillText(`FINAL SCORE: ${score}`,W/2,H/2+44);
-      ctx.fillStyle='#334a3a'; ctx.font='14px monospace';
+      ctx.fillStyle='#88ccaa'; ctx.font='16px monospace';
       const mm=Math.floor(elapsed/60).toString().padStart(2,'0');
       const ss=Math.floor(elapsed%60).toString().padStart(2,'0');
       ctx.fillText(`生存時間: ${mm}:${ss}  最終進化: ${EVO_LABEL[player.evoStage]}`,W/2,H/2+76);
-      ctx.fillStyle='#1a2a1a'; ctx.font='12px monospace';
-      ctx.fillText('[ SPACE ] / [ クリック ] でタイトルへ',W/2,H/2+105);
+      ctx.fillStyle='#99bbaa'; ctx.font='bold 14px monospace';
+      ctx.fillText('[ SPACE ] / [ クリック ] でタイトルへ',W/2,H/2+108);
     }
   } else {
     state='TITLE';
