@@ -832,23 +832,25 @@ function evalStatic(b, h, elim, vp){
         }
       }
     });
+// 全敵の利きに自分の駒があるとペナルティ（簡易修正）
+const attacked=new Set();
+[0,1,2].filter(o=>o!==me&&!elim[o]).forEach(enemy=>{
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    if(b[r][c]?.o!==enemy) continue;
+    rawMoves(b,r,c).forEach(([dr,dc])=>attacked.add(dr+','+dc));
+  }
+});
 
-    // 全敵の利きに自分の駒があるとペナルティ
-    const attacked=new Set();
-    [0,1,2].filter(o=>o!==me&&!elim[o]).forEach(enemy=>{
-      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-        if(b[r][c]?.o!==enemy) continue;
-        rawMoves(b,r,c).forEach(([dr,dc])=>attacked.add(dr+','+dc));
-      }
-    });
-    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-      const cell=b[r][c];
-      if(!cell||cell.o!==me) continue;
-      if(attacked.has(r+','+c)){
-        let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
-        score -= v * AI_HANG_PENALTY_DYN;
-      }
-    }
+for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+  const cell=b[r][c];
+  if(!cell||cell.o!==me) continue;
+  if(attacked.has(r+','+c)){
+    let v=PV[cell.p]||0; 
+    if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
+    score -= v * AI_HANG_PENALTY_DYN * 0.3;
+  }
+}
+
     return score;
   }
 
@@ -940,7 +942,12 @@ function allMovesOn(bd,hd,o,elim){
     dests.forEach(([tr,tc])=>{
       // 共闘モード時のみ: CPUがチームメイトの駒を取る手は生成しない
       const target=bd[tr][tc];
-      if(cpuCollusion && !humanEliminated && o!==humanPlayer && target && target.o!==humanPlayer && !elim[target.o]) return;
+      if(cpuCollusion && !humanEliminated &&
+         o!==humanPlayer && 
+         target && 
+         target.o!==humanPlayer &&
+         !elim[target.o])
+         return;
       const canPro=!cell.pr&&['FU','KY','KE','GIN','KAKU','HI'].includes(cell.p);
       const inZone=canPro&&(inPromoZone(o,r,c)||inPromoZone(o,tr,tc));
       const must=mustPromote(cell.p,o,tr,tc);
