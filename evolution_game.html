@@ -106,6 +106,15 @@ const B = {
   EVO1_FIRERATE:      650,   // 変異体：連射速度条件(ms以下)
   EVO2_BULLET:        14,    // 怪物体：弾数条件
   EVO2_FIRERATE:      500,   // 怪物体：連射速度条件(ms以下)
+
+  // ── RUSHER挙動 ───────────────────────────────────────
+  RUSHER_CHARGE_F:    55,    // チャージフレーム数
+  RUSHER_DASH_SPD:    7.0,   // ダッシュ速度倍率
+  RUSHER_DASH_DUR:    22,    // ダッシュ持続フレーム
+  RUSHER_COOLDOWN:    90,    // ダッシュ後クールダウン(フレーム)
+  RUSHER_COOLDOWN_RND:60,    // クールダウンのランダム幅
+  RUSHER_DEATH_SPD:   9.0,   // デスダッシュ速度倍率
+  RUSHER_DEATH_DMG:   2.5,   // デスダッシュダメージ倍率
 };
 // ═══════════════════════════════════════════════════════
 
@@ -197,7 +206,7 @@ let tvDragOY = 0;
 const player = {
   x:0, y:0, hp:B.PLAYER_HP, maxHp:B.PLAYER_HP, spd:B.PLAYER_SPD,
   mode:'RED', bCount:B.PLAYER_BULLET, fireRate:B.PLAYER_FIRE_RATE, bSpd:1.0, bSz:1.0,
-  fireAngle:0, mixIdx:0, lastFire:0, evoStage:0, invincible:0,
+  fireAngle:0, mixIdx:0, lastFire:0, evoStage:0, invincible:0, mixSet:['RED','BLUE','GREEN'],
 };
 
 let bullets=[], enemies=[], items=[], particles=[], floatMsgs=[];
@@ -310,7 +319,7 @@ window.addEventListener('keydown', e => {
     if (e.code==='Digit1') player.mode='RED';
     if (e.code==='Digit2') player.mode='BLUE';
     if (e.code==='Digit3') player.mode='GREEN';
-    if (e.code==='Digit4'||e.code==='KeyM') player.mode='MIXED';
+    if (e.code==='Digit4'||e.code==='KeyM') player.mode = player.mode==='MIXED' ? 'RED' : 'MIXED';
     if (e.code==='KeyG') { useGrid=!useGrid; }
     if (e.code==='KeyF') { showDebug=!showDebug; }
     if (e.code==='KeyT') {
@@ -348,12 +357,37 @@ canvas.addEventListener('click', e => {
     return;
   }
 
-  // モードボタン判定 — 左下 (y: H-BH-36 〜 H-36, 幅78, gap84)
+  // モードボタン判定 — 左下
   const BW=90, BH=56, BGAP=96, BY=H-BH-36;
   if (cy>=BY && cy<=BY+BH) {
-    const modes=['RED','BLUE','GREEN','MIXED'];
+    const btnTypes=['RED','BLUE','GREEN','MIXED'];
     for (let i=0;i<4;i++) {
-      if (cx>=14+BGAP*i && cx<=14+BGAP*i+BW) { player.mode=modes[i]; return; }
+      if (cx>=14+BGAP*i && cx<=14+BGAP*i+BW) {
+        if (i<3) {
+          // 赤/青/緑: シングルモード or MIX選択中にチェック切替
+          if (player.mode==='MIXED') {
+            // MIX中はチェックボックストグル（最低1つは残す）
+            const t=btnTypes[i];
+            const ms=player.mixSet||['RED','BLUE','GREEN'];
+            if (ms.includes(t)) {
+              if (ms.length>1) player.mixSet=ms.filter(x=>x!==t);
+            } else {
+              player.mixSet=[...ms,t];
+            }
+          } else {
+            player.mode=btnTypes[i];
+          }
+        } else {
+          // MIXボタン: 再クリックで解除
+          if (player.mode==='MIXED') {
+            player.mode='RED';
+          } else {
+            player.mode='MIXED';
+            if (!player.mixSet || player.mixSet.length===0) player.mixSet=['RED','BLUE','GREEN'];
+          }
+        }
+        return;
+      }
     }
   }
 
@@ -392,7 +426,7 @@ function startGame() {
   Object.assign(player, {
     x:W/2, y:H/2, hp:B.PLAYER_HP, maxHp:B.PLAYER_HP, spd:B.PLAYER_SPD,
     mode:'RED', bCount:B.PLAYER_BULLET, fireRate:B.PLAYER_FIRE_RATE, bSpd:1.0, bSz:1.0,
-    fireAngle:0, mixIdx:0, lastFire:0, evoStage:0, invincible:0,
+    fireAngle:0, mixIdx:0, lastFire:0, evoStage:0, invincible:0, mixSet:['RED','BLUE','GREEN'],
   });
 }
 
@@ -405,8 +439,9 @@ function fireBullets(now) {
   const step = (Math.PI*2) / player.bCount;
   sfxFire();
   for (let i=0; i<player.bCount; i++) {
+    const mix = (player.mixSet && player.mixSet.length>0) ? player.mixSet : ['RED','BLUE','GREEN'];
     const type = player.mode==='MIXED'
-      ? ['RED','BLUE','GREEN'][(player.mixIdx+i)%3]
+      ? mix[(player.mixIdx+i)%mix.length]
       : player.mode;
     const bd  = BULLET[type];
     const ang = step*i + player.fireAngle;
@@ -703,6 +738,12 @@ function updatePlaying(now, dt) {
         // ダッシュ中の残像パーティクル
         if (Math.random()<0.4) spawnParticles(e.x, e.y, 1, '#ff8800');
 
+      } else if (e.chargeTimer === 0) {
+        // ダッシュ発射！
+        e.dashing = true;
+        e.dashDur = B.RUSHER_DASH_DUR;
+        playTone(180,'sawtooth',0.05,0.08,80);
+
       } else if (e.chargeTimer > 0) {
         // チャージ中: 止まって向きを固定
         if (dist>0.5) { e.x+=dx/dist*e.spd*0.15; e.y+=dy/dist*e.spd*0.15; }
@@ -712,12 +753,6 @@ function updatePlaying(now, dt) {
         e.chargeTimer = B.RUSHER_CHARGE_F;
         e.dashVx = (dx/dist) * (e.spd * B.RUSHER_DASH_SPD);
         e.dashVy = (dy/dist) * (e.spd * B.RUSHER_DASH_SPD);
-
-      } else if (e.chargeTimer === 0) {
-        // ダッシュ発射！
-        e.dashing = true;
-        e.dashDur = B.RUSHER_DASH_DUR;
-        playTone(180,'sawtooth',0.05,0.08,80);
 
       } else {
         // 通常移動
@@ -1300,41 +1335,67 @@ function drawHUD() {
   ctx.fillStyle='#fff'; ctx.font='11px monospace';
   ctx.fillText(`HP  ${Math.ceil(player.hp)} / ${player.maxHp}`,18,22);
 
-  // Mode selector — 左下に大きく配置
+  // Mode selector — チェックボックス式
   const modes=[
     {k:'1',m:'RED',  c:'#ff4444',l:'赤弾'},
     {k:'2',m:'BLUE', c:'#3399ff',l:'青弾'},
     {k:'3',m:'GREEN',c:'#33ff77',l:'緑弾'},
-    {k:'M',m:'MIXED',c:'#ffaa33',l:'MIX'},
   ];
   const BW=90, BH=56, BGAP=96, BY=H-BH-36;
   let bx=14;
+  const ms = player.mixSet || ['RED','BLUE','GREEN'];
   for (const mo of modes) {
-    const active=player.mode===mo.m;
+    const active = player.mode===mo.m;
+    const checked = ms.includes(mo.m);
     // 背景
-    ctx.fillStyle=active?mo.c+'40':'#0e160e';
+    ctx.fillStyle = active ? mo.c+'40' : '#0e160e';
     ctx.fillRect(bx,BY,BW,BH);
     // 枠
-    ctx.strokeStyle=active?mo.c:mo.c+'55';
-    ctx.lineWidth=active?2.5:1;
+    ctx.strokeStyle = active ? mo.c : (checked ? mo.c+'88' : mo.c+'33');
+    ctx.lineWidth = active ? 2.5 : (checked ? 1.5 : 1);
     ctx.strokeRect(bx,BY,BW,BH);
-    // アクティブは左端に縦ライン
-    if (active) {
-      ctx.fillStyle=mo.c;
-      ctx.fillRect(bx,BY,3,BH);
-      ctx.shadowColor=mo.c; ctx.shadowBlur=18;
-    }
+    // アクティブは左端縦ライン
+    if (active) { ctx.fillStyle=mo.c; ctx.fillRect(bx,BY,3,BH); ctx.shadowColor=mo.c; ctx.shadowBlur=18; }
     // キー番号
-    ctx.fillStyle=active?mo.c:'#aabbaa';
+    ctx.fillStyle = active ? mo.c : '#aabbaa';
     ctx.font='12px monospace';
     ctx.fillText(`[${mo.k}]`,bx+7,BY+16);
-    // 弾名（非アクティブもカラーで表示）
+    // 弾名
     if (!active) { ctx.shadowColor=mo.c; ctx.shadowBlur=6; }
-    ctx.fillStyle=active?mo.c:mo.c+'cc';
+    ctx.fillStyle = active ? mo.c : (checked ? mo.c+'cc' : mo.c+'44');
     ctx.font='bold 19px monospace';
     ctx.fillText(mo.l,bx+8,BY+42);
     ctx.shadowBlur=0;
     bx+=BGAP;
+  }
+  // MIXボタン
+  {
+    const active = player.mode==='MIXED';
+    const mc = '#ffaa33';
+    const mixLabel = (ms.length===0) ? 'MIX(0)' : 'MIX';
+    ctx.fillStyle = active ? mc+'40' : '#0e160e';
+    ctx.fillRect(bx,BY,BW,BH);
+    ctx.strokeStyle = active ? mc : mc+'55';
+    ctx.lineWidth = active ? 2.5 : 1;
+    ctx.strokeRect(bx,BY,BW,BH);
+    if (active) { ctx.fillStyle=mc; ctx.fillRect(bx,BY,3,BH); ctx.shadowColor=mc; ctx.shadowBlur=18; }
+    ctx.fillStyle = active ? mc : '#aabbaa';
+    ctx.font='12px monospace';
+    ctx.fillText('[M]',bx+7,BY+16);
+    if (!active) { ctx.shadowColor=mc; ctx.shadowBlur=6; }
+    ctx.fillStyle = active ? mc : mc+'cc';
+    ctx.font='bold 19px monospace';
+    ctx.fillText(mixLabel,bx+8,BY+42);
+    // MIX時に選択弾をドット表示
+    const dotCols = {'RED':'#ff4444','BLUE':'#3399ff','GREEN':'#33ff77'};
+    let dx2=bx+8, dy2=BY+52;
+    for (const c of ['RED','BLUE','GREEN']) {
+      ctx.beginPath(); ctx.arc(dx2,dy2,4,0,Math.PI*2);
+      ctx.fillStyle = ms.includes(c) ? dotCols[c] : dotCols[c]+'33';
+      ctx.fill();
+      dx2+=14;
+    }
+    ctx.shadowBlur=0;
   }
 
   // Score
