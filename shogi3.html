@@ -225,26 +225,28 @@ const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
 // 難易度設定テーブル
 const DIFFICULTY_LEVELS = {
-  beginner: { label:'入門', depth:1, cands:3, noise:300, hangPenalty:0.2, emoji:'🌱' },
-  easy:     { label:'初級', depth:2, cands:5, noise:100, hangPenalty:0.5, emoji:'🌿' },
-  normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:10, hangPenalty:1.0, emoji:'⚔️' },
-  hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:0,  hangPenalty:1.5, emoji:'🔥' },
+  beginner: { label:'入門', depth:1, cands:3, noise:300, mobilityMult:0.3,  emoji:'🌱' },
+  easy:     { label:'初級', depth:2, cands:5, noise:100, mobilityMult:0.5,  emoji:'🌿' },
+  normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:10, mobilityMult:0.7,  emoji:'⚔️' },
+  hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:0,  mobilityMult:0.9,  emoji:'🔥' },
 };
 let currentDifficulty = 'normal';
 
 let AI_SEARCH_DEPTH    = DIFFICULTY_LEVELS.normal.depth;
 let AI_MOVE_CANDIDATES = DIFFICULTY_LEVELS.normal.cands;
 let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
-let AI_HANG_PENALTY_DYN= DIFFICULTY_LEVELS.normal.hangPenalty;
+let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
-const AI_PROXIMITY_MULT  = 15;    // 王への駒接近ボーナス係数
-const AI_ENTRY_MULT      = 50;    // 入玉距離ボーナス係数
-const AI_HAND_BONUS_RATE = 1.1;   // 持ち駒の価値倍率
-const AI_SCORE_TRYWIN    = 1800000;  // 勝利手スコア（CPU最大化）
-const AI_SCORE_TRYLOSE   = -1500000; // 敗北手スコア（CPU最小化）
-const AI_DELAY_MS        = 400;   // AI思考後の待機時間(ms)
-const AI_SKIP_DELAY_MS   = 800;   // スキップ時の待機時間(ms)
-const PV  ={FU:100,KY:300,KE:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:99999};
+const AI_MOBILITY_SCALE      = 10;   // モビリティ1マスあたりの点数スケール
+const AI_ENTRY_MULT          = 10;   // 入玉距離ボーナス係数
+const AI_KING_SAFETY_MULT    = 15;   // 王の安全度スコア係数
+const AI_KING_SAFETY_DENOM_EXP = 0.9; // 安全度分母の指数（広い場所ほど満点が高い）
+const AI_HAND_BONUS_RATE = 1.2;     // 持ち駒の価値倍率（手駒は盤上より少し高評価）
+const AI_SCORE_TRYWIN    = 1800000; // 勝利局面スコア
+const AI_SCORE_TRYLOSE   = -1500000;// 敗北局面スコア
+const AI_DELAY_MS        = 400;     // AI着手後の表示待機(ms)
+const AI_SKIP_DELAY_MS   = 800;     // スキップ時の待機(ms)
+const PV  ={FU:100,KY:300,KE:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:10000000};
 const PVP ={FU:200,KY:200,KE:200,GIN:50,KAKU:500,HI:450};
 const PC  ={FU:'歩',KY:'香',KE:'桂',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
 const PCP ={FU:'と',KY:'杏',KE:'今',GIN:'全',KAKU:'馬',HI:'龍'};
@@ -258,7 +260,6 @@ let selected, vmoves, selHand, promoQ, lastMove;
 let eliminated;
 let viewPlayer=0; // 0=P0視点, 1=P1視点, 2=P2視点
 let humanPlayer=0; // 人間が操作するプレイヤー
-let ENEMY=0;        // AIが敵とみなすプレイヤー（=humanPlayer）
 let humanEliminated=false; // 人間が脱落したらCPU対CPU
 let cpuCollusion=true;    // CPU共闘モード（falseで三つ巴の自由対局）
 let gameGen=0;
@@ -349,7 +350,6 @@ function init(){
   hand[2].push('KY','KE');
 
   viewPlayer=humanPlayer;
-  ENEMY=humanPlayer;
   setStatus(pName(humanPlayer)+'の番です');
   render();
   // 人間がP0以外のとき、最初のAIターンをキック
@@ -375,7 +375,7 @@ function kickAI(){
   },AI_DELAY_MS);
 }
 function setHumanPlayer(p){
-  humanPlayer=p; ENEMY=p; viewPlayer=p;
+  humanPlayer=p; viewPlayer=p;
   [0,1,2].forEach(i=>PNAME[i]=PNAME_BASE[i]); // 毎回クリーンにリセット
   PNAME[p]=PNAME_BASE[p]+'(あなた)';
   // ボタンのハイライト更新
@@ -795,61 +795,72 @@ function pieceScores(b, h, owners) {
   });
 
   // 引数 owners で指定された順番通りの配列にして返す
-  return owners.map(o => scoresMap[o]);
+return owners.map((o) => { return scoresMap[o];});
+}
+
+// ── AI評価ヘルパー ──
+function calcMobility(b, o){
+  const seen = new Set();
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    if(b[r][c]?.o!==o) continue;
+    rawMoves(b,r,c).forEach(([dr,dc])=>seen.add(dr+','+dc));
+  }
+  return seen.size;
+}
+
+function calcKingSafety(b, o){
+  const [kr,kc] = findKingOn(b, o);
+  if(kr<0) return 0;
+  // 王を含む3x3範囲の盤内マスに、自分の駒がいるか利きが届いているかをカバー率で評価
+  const myMoves = new Set();
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    if(b[r][c]?.o!==o || b[r][c]?.p==='OU') continue;
+    rawMoves(b,r,c).forEach(([dr,dc])=>myMoves.add(dr+','+dc));
+  }
+  let covered = 0, total = 0;
+  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+    const nr=kr+dr, nc=kc+dc;
+    if(nr<0||nr>=9||nc<0||nc>=9) continue; // 盤外は分母にも含めない
+    total++;
+    const cell = b[nr][nc];
+    // 自分の駒がいる、または利きが届いている（王自身のマスも含む）
+    if((cell?.o===o) || myMoves.has(nr+','+nc)) covered++;
+  }
+  return total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0; // 広いほど満点が高くなるカバー率
+}
+
+function calcEntryBonus(b, o){
+  const [kr,kc] = findKingOn(b, o);
+  if(kr<0) return 0;
+  const dist = o===0 ? kr : o===1 ? 8-kr : kc;
+  return (Math.pow(2, Math.max(0, 4-dist)) - 1) * AI_ENTRY_MULT;
 }
 
 // ── 静的評価 ──
 // 共闘モード: CPU連合 vs 人間 / 人間脱落後 CPU同士
 // 自由対局モード: 各自が全員を敵とする「パラノイド」評価
 function evalStatic(b, h, elim, vp){
-  elim = elim || eliminated;
   const pieceScore = pieceScores(b,h,[0,1,2]);
-  const cpus = [0,1,2].filter(o=>!elim[o]);
-  if(cpus.length <= 1) return 0;
+  const cpus = [0,1,2].filter(o=>!elim[o]); //プレイヤーの数
+  if(cpus.length <= 1){
+     if(cpus[0] === vp) return 1000000000;
+     return -10000000000
+  }
 
   // ── 自由対局モード（三つ巴）──
   if(!cpuCollusion){
-    const me = (vp === -1) ? cpus[0] : vp;
-    if(elim[me]) return -AI_SCORE_TRYWIN; // 自分が脱落 = 最悪
-    let score = pieceScore[me];
-    [0,1,2].filter(o=>o!==me&&!elim[o]).forEach(e => score -= pieceScore[e]);
+    if(elim[vp]) return -AI_SCORE_TRYWIN; // 自分が脱落 = 最悪
+    let score = pieceScore[vp];
+    [0,1,2].filter(o=>o!==vp&&!elim[o]).forEach(e=>score-=pieceScore[e]);
 
-    // 自分の駒を全敵の王に近づけるほど有利
-    [0,1,2].filter(o=>o!==me&&!elim[o]).forEach(enemy=>{
-      const [ekr,ekc]=findKingOn(b,enemy);
-      const [mkr,mkc]=findKingOn(b,me);
-      if(ekr>=0){
-        for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-          const cell=b[r][c];
-          if(cell?.o===me&&cell?.p!=='OU')
-            score += Math.max(0,(8-Math.abs(r-ekr)-Math.abs(c-ekc)))*AI_PROXIMITY_MULT*0.5;
-        }
-        // 入玉ボーナス（自分の王が敵陣へ）
-        if(mkr>=0){
-          if(me===1) score+=(mkr-4)*AI_ENTRY_MULT*0.5;
-          else if(me===2) score+=(4-mkc)*AI_ENTRY_MULT*0.5;
-          else score+=(4-mkr)*AI_ENTRY_MULT*0.5;
-        }
-      }
+    // モビリティ（利きの広さ）と入玉ボーナスを対称に適用
+    const mobVp = calcMobility(b, vp);
+    const safeVp = calcKingSafety(b, vp);
+    [0,1,2].filter(o=>o!==vp&&!elim[o]).forEach(enemy=>{
+      score += (mobVp - calcMobility(b, enemy)) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
+      score += calcEntryBonus(b, vp) - calcEntryBonus(b, enemy);
+      score += (safeVp - calcKingSafety(b, enemy)) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
     });
-// 全敵の利きに自分の駒があるとペナルティ（簡易修正）
-const attacked=new Set();
-[0,1,2].filter(o=>o!==me&&!elim[o]).forEach(enemy=>{
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    if(b[r][c]?.o!==enemy) continue;
-    rawMoves(b,r,c).forEach(([dr,dc])=>attacked.add(dr+','+dc));
-  }
-});
-
-for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-  const cell=b[r][c];
-  if(!cell||cell.o!==me) continue;
-  if(attacked.has(r+','+c)){
-    let v=PV[cell.p]||0; 
-    if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
-    score -= v * AI_HANG_PENALTY_DYN * 0.3;
-  }
-}
 
     return score;
   }
@@ -859,73 +870,23 @@ for(let r=0;r<9;r++) for(let c=0;c<9;c++){
 
   if(humanIsElim){
     const c1=cpus[0], c2=cpus[1];
-    let score = pieceScore[c1]-pieceScore[c2];
-    const [k2r,k2c] = findKingOn(b,c2);
-    const [ck1r,ck1c] = findKingOn(b,c1);
-    if(k2r>=0){
-      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-        const cell=b[r][c];
-        if(cell?.o===c1&&cell?.p!=='OU')
-          score += Math.max(0,(8-Math.abs(r-k2r)-Math.abs(c-k2c)))*AI_PROXIMITY_MULT;
-      }
-    }
-    if(ck1r>=0){
-      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-        const cell=b[r][c];
-        if(cell?.o===c2&&cell?.p!=='OU')
-          score -= Math.max(0,(8-Math.abs(r-ck1r)-Math.abs(c-ck1c)))*AI_PROXIMITY_MULT;
-      }
-    }
-    if(ck1r>=0){
-      if(c1===1) score+=(ck1r-4)*AI_ENTRY_MULT;
-      else if(c1===2) score+=(4-ck1c)*AI_ENTRY_MULT;
-      else score+=(4-ck1r)*AI_ENTRY_MULT;
-    }
-    if(k2r>=0){
-      if(c2===1) score-=(k2r-4)*AI_ENTRY_MULT;
-      else if(c2===2) score-=(4-k2c)*AI_ENTRY_MULT;
-      else score-=(4-k2r)*AI_ENTRY_MULT;
-    }
-    return score * ((vp === c1) * 2-1);
+    // c1視点のスコアを計算し、vpに応じて符号反転
+    let score = pieceScore[c1] - pieceScore[c2];
+    score += (calcMobility(b,c1) - calcMobility(b,c2)) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
+    score += calcEntryBonus(b,c1) - calcEntryBonus(b,c2);
+    score += (calcKingSafety(b,c1) - calcKingSafety(b,c2)) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
+    return vp === c1 ? score : -score;
   } else {
     const hu = humanPlayer;
-    let score = pieceScore.reduce((acc, cur, i) => acc + (hu === i ? -cur : cur), 0);
-    // ★★★ ここから追加 ★★★
-    // 2. 味方の脱落ペナルティ（あなたの案）
-    [0, 1, 2].forEach(o => {
-      if (o !== hu && elim[o]) {
-        // 脱落した味方が「持っていたはずの駒の価値」を、そのままマイナスする
-        // これにより「戦力喪失」を評価
-        score -= pieceScore[o]; 
-        score -= 2000; // 王様の基本価値（任意）
-      }
-    });
-    // ★★★ ここまで追加 ★★★
-    const [kr,kc] = findKingOn(b, hu);
-    if(kr >= 0){
-      [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
-        const [ckr,ckc] = findKingOn(b, cpu);
-        if(ckr>=0){
-          if(cpu===1) score+=(ckr-4)*AI_ENTRY_MULT;
-          else if(cpu===2) score+=(4-ckc)*AI_ENTRY_MULT;
-          else score+=(4-ckr)*AI_ENTRY_MULT;
-        }
-      });
-    }
-    const huAttacked=new Set();
-    for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-      if(b[r][c]?.o!==hu) continue;
-      rawMoves(b,r,c).forEach(([dr,dc])=>huAttacked.add(dr+','+dc));
-    }
-    [0,1,2].filter(o=>o!==hu&&!elim[o]).forEach(cpu=>{
-      for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-        const cell=b[r][c];
-        if(!cell||cell.o!==cpu) continue;
-        if(huAttacked.has(r+','+c)){
-          let v=PV[cell.p]||0; if(cell.pr&&PVP[cell.p]) v+=PVP[cell.p];
-          score -= v * AI_HANG_PENALTY_DYN;
-        }
-      }
+    // CPU全員 vs 人間: CPUの駒合計 - 人間の駒合計
+    let score = pieceScore.reduce((acc, cur, i) => acc + (i === hu ? -cur : cur), 0);
+    const liveCpus = [0,1,2].filter(o=>o!==hu&&!elim[o]);
+    const huMob = calcMobility(b, hu);
+    const huSafe = calcKingSafety(b, hu);
+    liveCpus.forEach(cpu => {
+      score += calcEntryBonus(b, cpu);
+      score += (calcMobility(b, cpu) - huMob) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
+      score += (calcKingSafety(b, cpu) - huSafe) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
     });
     return score;
   }
@@ -1063,15 +1024,15 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
 }
 
 // 動いた後に王がすぐ取られるかチェック（自爆防止）
-function kingWouldBeCaptured(bd, hd, o, elim){
+
+function kingWouldBeCaptured(bd, o, elim){
   const [kr,kc]=findKingOn(bd,o);
   if(kr<0) return false;
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=bd[r][c];
     if(!cell||cell.o===o||elim[cell.o]) continue;
-    const dests=rawMoves(bd,r,c);
-
-    if(dests.some(([mr,mc])=>mr===kr&&mc===kc)) return true;
+    if(cpuCollusion && !humanEliminated && cell.o!==humanPlayer) continue;
+    if(rawMoves(bd,r,c).some(([mr,mc])=>mr===kr&&mc===kc)) return true;
   }
   return false;
 }
@@ -1080,6 +1041,10 @@ function aiMove(o,bd,hd,elim){
   let moves=allMovesOn(bd,hd,o,elim);
   if(!moves.length) return null;
 
+  const boardMvTop = moves.filter(m => !m.drop);
+  const dropMvTop  = moves.filter(m => m.drop);
+  boardMvTop.sort((a,b) => quickMoveScore(bd,b) - quickMoveScore(bd,a));
+  moves = boardMvTop.concat(dropMvTop); // 打ち駒は盤上の手の後ろに全部
   let best=moves[0], bestScore=-Infinity;
   for(const mv of moves){
     if(!mv.drop){
@@ -1093,8 +1058,9 @@ function aiMove(o,bd,hd,elim){
     const {b:nb,h:nh,elim:newElim,tryWin}=simApply(bd,hd,elim,mv,o);
     // 王を取れるなら即返す
     if(tryWin) return mv;
+    // 王手放置・自爆手は除外
+    if(!newElim[o] && kingWouldBeCaptured(nb,o,newElim)) continue;
     const nxt = nextAliveOn(newElim, o);
-    const aliveNow = newElim.filter(e=>!e).length;
     const searchDepth = AI_SEARCH_DEPTH;
     const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt, o);
     
@@ -1553,7 +1519,7 @@ function setDifficulty(level){
   AI_SEARCH_DEPTH    = cfg.depth;
   AI_MOVE_CANDIDATES = cfg.cands;
   AI_NOISE           = cfg.noise;
-  AI_HANG_PENALTY_DYN= cfg.hangPenalty;
+  AI_MOBILITY_MULT = cfg.mobilityMult;
   // ボタンハイライト更新
   Object.keys(DIFFICULTY_LEVELS).forEach(k=>{
     const btn=document.getElementById('diff-'+k);
