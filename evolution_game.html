@@ -341,15 +341,15 @@ canvas.addEventListener('click', e => {
   if (state!=='PLAYING') return;
 
   // TVボタン判定
-  const tvBX2=14+84*4, tvBY2=H-46-36;
-  if (cx>=tvBX2 && cx<=tvBX2+60 && cy>=tvBY2 && cy<=tvBY2+46) {
+  const tvBX2=14+96*4, tvBY2=H-64-36;
+  if (cx>=tvBX2 && cx<=tvBX2+84 && cy>=tvBY2 && cy<=tvBY2+64) {
     tvOn=!tvOn;
     if (tvOn && tvX<0) { tvX=W/2-TV_W/2; tvY=H/2-TV_H/2-20; }
     return;
   }
 
   // モードボタン判定 — 左下 (y: H-BH-36 〜 H-36, 幅78, gap84)
-  const BW=78, BH=46, BGAP=84, BY=H-BH-36;
+  const BW=90, BH=56, BGAP=96, BY=H-BH-36;
   if (cy>=BY && cy<=BY+BH) {
     const modes=['RED','BLUE','GREEN','MIXED'];
     for (let i=0;i<4;i++) {
@@ -357,7 +357,8 @@ canvas.addEventListener('click', e => {
     }
   }
 
-  // それ以外はクリック地点へ移動
+  // それ以外はクリック地点へ移動（TV内部は除く）
+  if (tvOn && cx>=tvX && cx<=tvX+TV_W && cy>=tvY && cy<=tvY+TV_H) return;
   mouseTgt = {x:cx, y:cy};
 });
 
@@ -1131,7 +1132,7 @@ function drawTV(now) {
   // つかむエリアのヒント（上部グリップ）
   ctx.fillStyle= tvDrag ? '#334' : '#252525';
   ctx.beginPath(); ctx.roundRect(tx-22, ty-22, tw+44, 22, [18,18,0,0]); ctx.fill();
-  ctx.fillStyle='#444'; ctx.font='10px monospace'; ctx.textAlign='center';
+  ctx.fillStyle='#444'; ctx.font='12px monospace'; ctx.textAlign='center';
   ctx.fillText('⠿ つかんで移動', tx+tw/2, ty-7);
   ctx.textAlign='left';
 
@@ -1152,9 +1153,9 @@ function drawTV(now) {
       ctx.fillRect(tx+nx,ty+ny,2,2);
     }
     ctx.restore();
-    ctx.fillStyle='#ffffff22'; ctx.font='bold 28px monospace';
+    ctx.fillStyle='#ffffff22'; ctx.font='bold 36px monospace';
     ctx.textAlign='center';
-    ctx.fillText('■ 放送終了 ■',W/2,H/2+14);
+    ctx.fillText('■ 放送終了 ■', tx+tw/2, ty+th/2+14);
   } else {
     // スキャンライン風
     ctx.save();
@@ -1167,7 +1168,7 @@ function drawTV(now) {
     ctx.fillStyle='#ff2222';
     ctx.fillRect(tx, ty, tw, 36);
     ctx.fillStyle='#ffffff';
-    ctx.font='bold 14px monospace';
+    ctx.font='bold 16px monospace';
     ctx.textAlign='center';
     // idx12以降は進化ステージで内容が変わる
     let displayLines = lines;
@@ -1246,9 +1247,9 @@ function drawTV(now) {
     textLines.forEach((line, i) => {
       const pulse = i===0 ? (Math.sin(t*4)>0?'#ffffff':'#ffff88') : '#88ff99';
       ctx.fillStyle=pulse;
-      ctx.font = i===0 ? 'bold 17px monospace' : '13px monospace';
+      ctx.font = i===0 ? 'bold 20px monospace' : '15px monospace';
       ctx.textAlign='left';
-      ctx.fillText(line, tx+122, ty+72+i*34);
+      ctx.fillText(line, tx+122, ty+76+i*38);
     });
 
     // スクロールテロップ
@@ -1257,7 +1258,7 @@ function drawTV(now) {
     ctx.save();
     ctx.beginPath(); ctx.rect(tx, ty+th-28, tw, 28); ctx.clip(); // テロップ枠でクリップ
     const ticker = '▶ ' + getNewsText() + '        ';
-    ctx.font='bold 12px monospace';
+    ctx.font='bold 14px monospace';
     const tickW = ctx.measureText(ticker).width;
     const tickTotal = tw + tickW;
     const tickX = (t * 80) % tickTotal;
@@ -1279,9 +1280,9 @@ function drawTV(now) {
   }
 
   // 閉じるヒント
-  ctx.fillStyle='#334433'; ctx.font='10px monospace';
+  ctx.fillStyle='#88aa88'; ctx.font='13px monospace';
   ctx.textAlign='center';
-  ctx.fillText('[T] または TVボタンで消す', W/2, ty+th+58);
+  ctx.fillText('[T] または TVボタンで消す', tx+tw/2, ty+th+58);
   ctx.textAlign='left';
 }
 
@@ -1306,31 +1307,32 @@ function drawHUD() {
     {k:'3',m:'GREEN',c:'#33ff77',l:'緑弾'},
     {k:'M',m:'MIXED',c:'#ffaa33',l:'MIX'},
   ];
-  const BW=78, BH=46, BGAP=84, BY=H-BH-36;
+  const BW=90, BH=56, BGAP=96, BY=H-BH-36;
   let bx=14;
   for (const mo of modes) {
     const active=player.mode===mo.m;
     // 背景
-    ctx.fillStyle=active?mo.c+'35':'#080c08';
+    ctx.fillStyle=active?mo.c+'40':'#0e160e';
     ctx.fillRect(bx,BY,BW,BH);
     // 枠
-    ctx.strokeStyle=active?mo.c:'#223322';
+    ctx.strokeStyle=active?mo.c:mo.c+'55';
     ctx.lineWidth=active?2.5:1;
     ctx.strokeRect(bx,BY,BW,BH);
     // アクティブは左端に縦ライン
     if (active) {
       ctx.fillStyle=mo.c;
       ctx.fillRect(bx,BY,3,BH);
-      ctx.shadowColor=mo.c; ctx.shadowBlur=14;
+      ctx.shadowColor=mo.c; ctx.shadowBlur=18;
     }
     // キー番号
-    ctx.fillStyle=active?mo.c+'aa':'#334433';
-    ctx.font='10px monospace';
-    ctx.fillText(`[${mo.k}]`,bx+7,BY+14);
-    // 弾名
-    ctx.fillStyle=active?mo.c:'#445544';
-    ctx.font=(active?'bold ':'')+'16px monospace';
-    ctx.fillText(mo.l,bx+8,BY+35);
+    ctx.fillStyle=active?mo.c:'#aabbaa';
+    ctx.font='12px monospace';
+    ctx.fillText(`[${mo.k}]`,bx+7,BY+16);
+    // 弾名（非アクティブもカラーで表示）
+    if (!active) { ctx.shadowColor=mo.c; ctx.shadowBlur=6; }
+    ctx.fillStyle=active?mo.c:mo.c+'cc';
+    ctx.font='bold 19px monospace';
+    ctx.fillText(mo.l,bx+8,BY+42);
     ctx.shadowBlur=0;
     bx+=BGAP;
   }
@@ -1365,7 +1367,7 @@ function drawHUD() {
   ctx.fillText(`WAVE ${currentWave()+1}`, W-50, 36);
 
   // [TV] ボタン（右下のモードボタンの右端あたり）
-  const tvBX=14+84*4, tvBY=H-54-36, tvBW=72, tvBH=54;
+  const tvBX=14+96*4, tvBY=H-64-36, tvBW=84, tvBH=64;
   // グロー効果
   ctx.shadowColor= tvOn ? '#44ff88' : '#aaffcc';
   ctx.shadowBlur = tvOn ? 18 : 8;
@@ -1379,11 +1381,11 @@ function drawHUD() {
   ctx.fillStyle = tvOn ? '#44ff88' : '#338855';
   ctx.fillRect(tvBX, tvBY, 3, tvBH);
   // 絵文字と文字
-  ctx.font='20px monospace'; ctx.textAlign='center';
-  ctx.fillText('📺', tvBX+tvBW/2, tvBY+28);
+  ctx.font='24px monospace'; ctx.textAlign='center';
+  ctx.fillText('📺', tvBX+tvBW/2, tvBY+32);
   ctx.fillStyle = tvOn ? '#44ff88' : '#55cc88';
-  ctx.font = 'bold 11px monospace';
-  ctx.fillText(tvOn ? '■ ON' : '[T] TV', tvBX+tvBW/2, tvBY+45);
+  ctx.font = 'bold 13px monospace';
+  ctx.fillText(tvOn ? '■ ON' : '[T] TV', tvBX+tvBW/2, tvBY+52);
   ctx.textAlign='left'; ctx.shadowBlur=0;
 
   // Bottom stats bar
