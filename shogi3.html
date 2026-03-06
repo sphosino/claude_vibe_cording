@@ -238,7 +238,7 @@ let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
 const AI_MOBILITY_SCALE      = 10;   // モビリティ1マスあたりの点数スケール
-const AI_ENTRY_MULT          = 10;   // 入玉距離ボーナス係数
+const AI_ENTRY_MULT          = 100;   // 入玉距離ボーナス係数
 const AI_KING_SAFETY_MULT    = 15;   // 王の安全度スコア係数
 const AI_KING_SAFETY_DENOM_EXP = 0.9; // 安全度分母の指数（広い場所ほど満点が高い）
 const AI_HAND_BONUS_RATE = 1.2;     // 持ち駒の価値倍率（手駒は盤上より少し高評価）
@@ -933,6 +933,7 @@ function allMovesOn(bd,hd,o,elim){
       res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
     }
   });
+
   return res;
 }
 
@@ -1038,6 +1039,7 @@ function kingWouldBeCaptured(bd, o, elim){
 }
 
 function aiMove(o,bd,hd,elim){
+console.log(`[評価] 青:${(evalStatic(bd,hd,elim,0)+10000000).toFixed(0)} 赤:${(evalStatic(bd,hd,elim,1)+10000000).toFixed(0)} 緑:${(evalStatic(bd,hd,elim,2)+10000000).toFixed(0)}`);
   let moves=allMovesOn(bd,hd,o,elim);
   if(!moves.length) return null;
 
