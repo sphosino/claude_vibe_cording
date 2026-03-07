@@ -271,19 +271,20 @@ let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
 const AI_MOBILITY_SCALE      = 10;   // モビリティ1マスあたりの点数スケール
+const AI_THREAT_SCALE        = 0.005; // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値がモビリティに加算）
 const AI_ENTRY_MULT          = 214;   // 入玉距離ボーナス係数（2段目≒1500点、3段目≒600点）
 const AI_KING_SAFETY_MULT      = 1000; // 王の安全度スコア係数（飛車1枚分程度の影響力）
 const AI_KING_SAFETY_DENOM_EXP = 0.9;  // 安全度分母の指数（広い場所ほど満点が高い）
 const AI_COALITION_THRESHOLD   = 1500; // 連合発動の独走スコア差しきい値
 const AI_COALITION_MULT        = 0.5;  // 連合時の上位プレイヤーへの重み増加量
 const AI_FINISH_MULT           = 0.4;  // 1位が弱い敵を狙う際の重み増加量
-const AI_HAND_BONUS_RATE = 1.5;     // 持ち駒の価値倍率（手駒は盤上より少し高評価）
+const AI_HAND_BONUS_RATE = 1.2;     // 持ち駒の価値倍率（手駒は盤上より少し高評価）
 const AI_SCORE_TRYWIN    = 1800000; // 勝利局面スコア
 const AI_SCORE_TRYLOSE   = -1500000;// 敗北局面スコア
 const AI_DELAY_MS        = 400;     // AI着手後の表示待機(ms)
 const AI_SKIP_DELAY_MS   = 800;     // スキップ時の待機(ms)
 const PV  ={FU:100,KY:300,KE:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:10000000};
-const PVP ={FU:200,KY:200,KE:200,GIN:50,KAKU:500,HI:450};
+const PVP ={FU:400,KY:200,KE:150,GIN:100,KAKU:500,HI:450};
 const PC  ={FU:'歩',KY:'香',KE:'桂',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
 const PCP ={FU:'と',KY:'杏',KE:'今',GIN:'全',KAKU:'馬',HI:'龍'};
 const PCOL=['#4488ff','#ff4433','#33cc55'];
@@ -327,7 +328,7 @@ if(!CanvasRenderingContext2D.prototype.roundRect){
 // ── ユーティリティ ──
 function inB(r,c){return r>=0&&r<9&&c>=0&&c<9;}
 
-let evalStaticCount = 0 //デバッグ用カウント
+let evalStaticCount = 0; // デバッグ用：evalStatic呼び出し回数
 
 
 // 各プレイヤーの前進方向に合わせて差分を回転
@@ -357,6 +358,8 @@ const VIEW_ROT = [0, Math.PI, Math.PI/2];
 function renderKifu(){
   const el=document.getElementById('kifu-list');
   if(!el) return;
+  // 自己対局中: ユーザーが上を見ているときは自動スクロールしない
+  const atBottom = !selfPlayMode || (el.scrollHeight - el.scrollTop - el.clientHeight < 40);
   el.innerHTML=kifu.map((k,i)=>{
     const cls=i===kifu.length-1?'latest':'';
     return '<div class="'+cls+'">'+
@@ -365,7 +368,7 @@ function renderKifu(){
       '<span style="color:#e8d095;">'+k.fugo+'</span>'+
       '</div>';
   }).join('');
-  el.scrollTop=el.scrollHeight;
+  if(atBottom) el.scrollTop=el.scrollHeight;
 }
 
 function init(){
@@ -448,6 +451,9 @@ function toggleSelfPlay(){
     // 停止：パネルは残したまま、ボタンだけ変える
     selfPlayMode=false;
     selfPlayRunning=false;
+    // スクロールリスナーを掃除
+    const _kl=document.getElementById('kifu-list');
+    if(_kl&&_kl._spListener){ _kl.removeEventListener('scroll',_kl._spListener); _kl._spListener=null; }
     const cfg=DIFFICULTY_LEVELS[currentDifficulty];
     AI_SEARCH_DEPTH=cfg.depth;
     AI_NOISE=cfg.noise;
@@ -504,6 +510,11 @@ function startNextSelfPlay(){
   init();
   watchSelfPlay(gameGen);
 }
+function isKifuAtBottom(){
+  const el=document.getElementById('kifu-list');
+  if(!el) return true;
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+}
 function watchSelfPlay(gen){
   if(!selfPlayMode||gen!==gameGen) return;
   if(gover){
@@ -516,9 +527,29 @@ function watchSelfPlay(gen){
       selfPlayDraws++;
     }
     updateSpStats();
-    setTimeout(()=>startNextSelfPlay(), 200);
+    waitAndStartNext();
   } else {
     setTimeout(()=>watchSelfPlay(gen), 50);
+  }
+}
+function waitAndStartNext(){
+  if(!selfPlayMode) return;
+  if(isKifuAtBottom()){
+    setTimeout(()=>startNextSelfPlay(), 200);
+  } else {
+    // 棋譜を読み中 → 一番下にスクロールされるまで待機
+    document.getElementById('sp-status').textContent='📖 棋譜閲覧中... 最下部へスクロールで次局開始';
+    const el=document.getElementById('kifu-list');
+    if(el && !el._spListener){
+      el._spListener = ()=>{
+        if(isKifuAtBottom() && selfPlayMode){
+          el.removeEventListener('scroll', el._spListener);
+          el._spListener=null;
+          setTimeout(()=>startNextSelfPlay(), 200);
+        }
+      };
+      el.addEventListener('scroll', el._spListener);
+    }
   }
 }
 function setHumanPlayer(p){
@@ -958,13 +989,38 @@ return owners.map((o) => { return scoresMap[o];});
 }
 
 // ── AI評価ヘルパー ──
+function isHanging(b, r, c, o){
+  // 自駒(r,c)が敵の利きに入っているかチェック
+  for(let er=0;er<9;er++) for(let ec=0;ec<9;ec++){
+    const cell=b[er][ec];
+    if(!cell||cell.o===o) continue;
+    if(rawMoves(b,er,ec).some(([mr,mc])=>mr===r&&mc===c)) return true;
+  }
+  return false;
+}
+
 function calcMobility(b, o){
   const seen = new Set();
+  let threatBonus = 0;
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     if(b[r][c]?.o!==o) continue;
-    rawMoves(b,r,c).forEach(([dr,dc])=>seen.add(dr+','+dc));
+    const myPiece = b[r][c];
+    // 自駒がタダ取りされる状況（ハンギング）なら脅威ボーナスを出さない
+    const hanging = isHanging(b, r, c, o);
+    rawMoves(b,r,c).forEach(([dr,dc])=>{
+      seen.add(dr+','+dc);
+      if(hanging) return; // タダ取りされる駒の脅威はカウントしない
+      const enemy = b[dr]?.[dc];
+      if(enemy && enemy.o!==o){
+        // 自駒より敵駒が高価値の場合のみボーナス（等価以下は割引）
+        const myVal = PV[myPiece.p] || 0;
+        const enemyVal = PV[enemy.p] || 0;
+        const ratio = Math.min(1.0, enemyVal / (myVal + 1));
+        threatBonus += enemyVal * ratio * AI_THREAT_SCALE;
+      }
+    });
   }
-  return seen.size;
+  return seen.size + threatBonus;
 }
 
 function calcKingSafety(b, o){
@@ -1125,19 +1181,6 @@ function allMovesOn(bd,hd,o,elim){
   return res;
 }
 
-// 手のソート（強い手から探索→枝刈り効率UP）
-function sortMoves(moves,bd){
-  return moves.sort((a,b)=>{
-    const capA = !a.drop && bd[a.tr]?.[a.tc];
-    const capB = !b.drop && bd[b.tr]?.[b.tc];
-
-    const va = capA ? PV[capA.p] : 0;
-    const vb = capB ? PV[capB.p] : 0;
-
-    return vb - va;
-  });
-}
-
 // elim配列を使った次の生存プレイヤー取得
 function nextAliveOn(elim, current){
   let next = (current + 1) % 3;
@@ -1147,27 +1190,87 @@ function nextAliveOn(elim, current){
   }
   return -1;
 }
-// 1. 軽量なソート用スコア関数を導入
-function quickMoveScore(bd, mv, o) {
-  if (mv.drop) return PV[mv.piece] * 0.1; // 打ち込みは低め
+// 候補手ソート用スコア（minimax全ノードで呼ばれるので軽量に）
+function quickMoveScore(bd, mv, owner) {
+  if(mv.drop){
+    // 打った先の利きマス数 × 3 → 盤上移動のmobilityDeltaと同スケール
+    // 打った後の仮盤で利きを計算（移動と同じ式で統一）
+    const tempBd = bd.map(r => r.slice());
+    tempBd[mv.tr] = tempBd[mv.tr].slice();
+    tempBd[mv.tr][mv.tc] = {p: mv.piece, o: owner ?? -1, pr: false};
+    const dests = rawMoves(tempBd, mv.tr, mv.tc);
+    // 利きマス数 × 3（移動と同スケール）
+    const mobilityGain = dests.length * 3;
+    // 敵駒への脅威ボーナス（移動と同じ式）
+    let threatBonus = 0;
+    dests.forEach(([dr, dc]) => {
+      const enemy = bd[dr]?.[dc];
+      if(enemy && enemy.o !== (owner ?? -1)){
+        const myVal = PV[mv.piece] || 0;
+        const enemyVal = PV[enemy.p] || 0;
+        const ratio = Math.min(1.0, enemyVal / (myVal + 1));
+        threatBonus += enemyVal * ratio * AI_THREAT_SCALE;
+      }
+    });
+    const handCost = (PV[mv.piece] || 0) * 0.04; // 持ち駒コスト（飛車=36、歩=4）mobilityと同スケール
+    return mobilityGain + threatBonus - handCost;
+  }
   const target = bd[mv.tr][mv.tc];
-  if (target) return PV[target.p] * 10 + (mv.pro ? 50 : 0); // 取る手を優先
-  // 入玉阻止ボーナス: 敵の王が入玉圏内（5段目以上）にいるとき、その王の周辺への手を優先
-  let tryBlockBonus = 0;
-  if(o !== undefined){
-    for(let e=0; e<3; e++){
-      if(e===o) continue;
-      const [kr,kc] = findKingOn(bd, e);
-      if(kr<0) continue;
-      const inTryZone = (e===0 && kr<=4) || (e===1 && kr>=4) || (e===2 && kc<=4);
-      if(!inTryZone) continue;
-      const dist = Math.max(Math.abs(mv.tr-kr), Math.abs(mv.tc-kc));
-      if(dist <= 1) tryBlockBonus = Math.max(tryBlockBonus, 800);  // 王の隣接
-      else if(dist <= 2) tryBlockBonus = Math.max(tryBlockBonus, 300); // 2マス圏内
+  if(target) return PV[target.p] * 10 + (mv.pro ? 50 : 0); // 取る手を優先
+
+  // 移動前後の利きマス差分（その駒1枚のみ・軽量）
+  const piece = bd[mv.fr][mv.fc];
+  const before = rawMoves(bd, mv.fr, mv.fc).length;
+  const tempBd = bd.map(r => r.slice());
+  tempBd[mv.tr] = tempBd[mv.tr].slice();
+  tempBd[mv.fr] = tempBd[mv.fr].slice();
+  tempBd[mv.tr][mv.tc] = {p: piece.p, o: piece.o, pr: mv.pro || piece.pr};
+  tempBd[mv.fr][mv.fc] = null;
+  const after = rawMoves(tempBd, mv.tr, mv.tc).length;
+  const mobilityDelta = (after - before) * 3; // 1マスあたり3点
+
+  // 角道・飛車道を開けるボーナス
+  // 元の位置(fr,fc)から8方向に味方の飛・角がいるか探し、
+  // そこから前方(逆方向)に開く利きマス数をボーナスに加算
+  let openRoadBonus = 0;
+  const DIRS = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+  for(const [dr,dc] of DIRS){
+    // 後ろ方向に飛・角を探す
+    let br = mv.fr+dr, bc = mv.fc+dc;
+    while(br>=0&&br<9&&bc>=0&&bc<9){
+      const cell = bd[br][bc];
+      if(!cell){ br+=dr; bc+=dc; continue; }
+      if(cell.o === piece.o && (cell.p==='HI'||cell.p==='KAKU'||cell.p==='RYU'||cell.p==='UMA'||cell.p==='KY')){
+        // 飛・角が後ろにいた → 前方(-dr,-dc)方向に開く利きを数える
+        // tempBd上で前方に何マス通るか
+        const fdr=-dr, fdc=-dc;
+        // 飛はtate/yoko、角はnaname方向のみ有効
+        const isRook = cell.p==='HI'||cell.p==='RYU';
+        const isBishop = cell.p==='KAKU'||cell.p==='UMA';
+        // 香車: プレイヤーごとに前方向のみ（P0=上方向dr:-1, P1=下dr:+1, P2=左dc:-1）
+        const isLance = cell.p==='KY';
+        const lanceDir = cell.o===0?[-1,0]:cell.o===1?[1,0]:[0,-1];
+        const isDiag = Math.abs(dr)===1&&Math.abs(dc)===1;
+        const isAxis = dr===0||dc===0;
+        const isLanceDir = isLance && dr===lanceDir[0] && dc===lanceDir[1]; // 香の後ろ方向
+        if((isRook&&isAxis)||(isBishop&&isDiag)||isLanceDir){
+          let fr2 = mv.fr+fdr, fc2 = mv.fc+fdc;
+          let opened = 0;
+          while(fr2>=0&&fr2<9&&fc2>=0&&fc2<9){
+            if(tempBd[fr2][fc2]) break;
+            opened++;
+            fr2+=fdr; fc2+=fdc;
+          }
+          openRoadBonus += opened * 5; // 1マス開くごとに5点
+        }
+      }
+      break; // 何か駒があったら探索終了
     }
   }
-  return (mv.pro ? 20 : 0) + tryBlockBonus;
+
+  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus;
 }
+
 
 // ミニマックス探索
 // depth = 残り手数（1手ごとに-1）
@@ -1234,25 +1337,34 @@ function kingWouldBeCaptured(bd, o, elim){
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=bd[r][c];
     if(!cell||cell.o===o||elim[cell.o]) continue;
-    if(cpuCollusion && !humanEliminated && cell.o!==humanPlayer) continue;
     if(rawMoves(bd,r,c).some(([mr,mc])=>mr===kr&&mc===kc)) return true;
   }
   return false;
 }
 
 function aiMove(o,bd,hd,elim){
-  evalStaticCount = 0
+  evalStaticCount = 0;
   
   let moves=allMovesOn(bd,hd,o,elim);
 
   if(!moves.length) return null;
 
-  const boardMvTop = moves.filter(m => !m.drop);
-  const dropMvTop  = moves.filter(m => m.drop);
-  boardMvTop.sort((a,b) => quickMoveScore(bd,b,o) - quickMoveScore(bd,a,o));
-  moves = boardMvTop.concat(dropMvTop); // 打ち駒は盤上の手の後ろに全部
-  let best=moves[0], bestScore=-Infinity;
-  for(const mv of moves){
+  // 全手を同列にソートしてslice（打ち駒も盤上の手も公平に候補入り）
+  moves.sort((a,b) => quickMoveScore(bd,b,o) - quickMoveScore(bd,a,o));
+
+  // 王手回避手をsliceで落とさないよう先に分離して保護
+  const evasions = moves.filter(mv => {
+    if(mv.drop) return false;
+    const {b:nb, elim:newElim} = simApply(bd,hd,elim,mv,o);
+    return !newElim[o] && !kingWouldBeCaptured(nb,o,newElim);
+  });
+  const inCheck = kingWouldBeCaptured(bd,o,elim);
+  const candidates = inCheck
+    ? (evasions.length ? evasions : moves) // 王手中は回避手のみ、なければ全手
+    : moves.slice(0, AI_MOVE_CANDIDATES * 2);
+
+  let best=null, bestScore=-Infinity;
+  for(const mv of candidates){
     if(!mv.drop){
       const cell=bd[mv.fr]?.[mv.fc];
       if(cell?.p==='OU'){
@@ -1268,13 +1380,13 @@ function aiMove(o,bd,hd,elim){
     if(!newElim[o] && kingWouldBeCaptured(nb,o,newElim)) continue;
     const nxt = nextAliveOn(newElim, o);
     const searchDepth = AI_SEARCH_DEPTH;
-    const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt, o);
+    const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt, o)
+            + (Math.random()-0.5)*AI_NOISE; // root levelにもnoiseを加える
     
     if(v>bestScore){bestScore=v;best=mv;}
   }
 
-console.log(`[評価] 青:${(evalStatic(bd,hd,elim,0)).toFixed(0)} 赤:${(evalStatic(bd,hd,elim,1)).toFixed(0)} 緑:${(evalStatic(bd,hd,elim,2)).toFixed(0)}  評価回数:${evalStaticCount}`);
-  return best;
+  return best ?? candidates[0] ?? null;
 }
 
 // ── ターン管理 ──
