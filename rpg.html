@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>勇者の冒険</title>
+<title>勇者の冒険 (async版)</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{background:#000;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;overflow:hidden}
@@ -12,7 +12,7 @@ canvas{display:block;image-rendering:pixelated;border:3px solid #554433;box-shad
 </head>
 <body>
 <canvas id="c" width="640" height="480"></canvas>
-<div id="info">矢印キー or Dパッド：移動　Z/クリック：決定　X：キャンセル　Enter/メニューボタン：呪文メニュー</div>
+<div id="info">矢印キー/Dパッド：移動　Z：決定　X：キャンセル　Enter：メニュー</div>
 <script>'use strict';
 
 // ===== CANVAS =====
@@ -22,7 +22,6 @@ const C=document.getElementById('c'), ctx=C.getContext('2d');
 const G=0,W=1,M=2,T=3,D=4,F=5,X=6;
 const TW=32,TH=32,MW=20,MH=15;
 const WALKABLE=[G,T,D,F];
-
 const MAP=[
   [X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X,X],
   [X,T,G,G,G,G,G,G,G,G,G,G,G,G,G,G,G,G,T,X],
@@ -45,58 +44,49 @@ const MAP=[
 const player={
   name:'ゆうしゃ', x:2, y:1, dir:2, walkFrame:0, flashTimer:0,
   hp:30, maxHp:30, mp:10, maxMp:10,
-  atk:12, def:5, spd:8,
-  level:1, exp:0, expNext:10,
-  gold:60,
+  atk:12, def:5, level:1, exp:0, expNext:10, gold:60,
   items:[{name:'やくそう',count:5}],
   spells:[
     {name:'ホイミ',mp:3,type:'heal',power:40},
-    {name:'メラ',mp:4,type:'fire',power:28},
+    {name:'メラ', mp:4,type:'fire',power:28},
   ]
 };
 
 // ===== ENEMY DEFS =====
 const EDEFS=[
-  {name:'スライム',  hp:8,  atk:6,  def:2,  exp:4,  gold:3,  type:'slime',     color:'#4488ff'},
-  {name:'ドラキー',  hp:16, atk:9,  def:3,  exp:7,  gold:6,  type:'bat',       color:'#553366'},
-  {name:'おおなめくじ',hp:22,atk:13,def:5,  exp:10, gold:9,  type:'slug',      color:'#44aa33'},
-  {name:'メタルスライム',hp:4,atk:14,def:25,exp:90, gold:25, type:'metal',     color:'#aabbcc'},
+  {name:'スライム',    hp:8,  atk:6,  def:2,  exp:4,  gold:3,  type:'slime', color:'#4488ff'},
+  {name:'ドラキー',    hp:16, atk:9,  def:3,  exp:7,  gold:6,  type:'bat',   color:'#553366'},
+  {name:'おおなめくじ',hp:22, atk:13, def:5,  exp:10, gold:9,  type:'slug',  color:'#44aa33'},
+  {name:'メタルスライム',hp:4,atk:14, def:25, exp:90, gold:25, type:'metal', color:'#aabbcc'},
 ];
-const BOSS={
-  name:'魔王ゾーマ',hp:160,atk:28,def:12,exp:600,gold:1000,type:'boss',color:'#880000',isBoss:true
-};
+const BOSS={name:'魔王ゾーマ',hp:160,atk:28,def:12,exp:600,gold:1000,type:'boss',color:'#880000',isBoss:true};
 
 // ===== AUDIO =====
-let AC;
-try{ AC=new(window.AudioContext||window.webkitAudioContext)(); }catch(e){}
-
+let AC; try{AC=new(window.AudioContext||window.webkitAudioContext)();}catch(e){}
 function beep(freq,dur,type='sine',vol=0.15,freqEnd=null,startDelay=0){
-  if(!AC)return;
-  try{
+  if(!AC)return; try{
     if(AC.state==='suspended')AC.resume();
-    const o=AC.createOscillator(), g=AC.createGain();
-    o.type=type; o.connect(g); g.connect(AC.destination);
+    const o=AC.createOscillator(),g=AC.createGain();
+    o.type=type;o.connect(g);g.connect(AC.destination);
     const t=AC.currentTime+startDelay;
     o.frequency.setValueAtTime(freq,t);
     if(freqEnd)o.frequency.exponentialRampToValueAtTime(freqEnd,t+dur);
-    g.gain.setValueAtTime(vol,t);
-    g.gain.exponentialRampToValueAtTime(0.001,t+dur);
-    o.start(t); o.stop(t+dur+0.01);
+    g.gain.setValueAtTime(vol,t);g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+    o.start(t);o.stop(t+dur+0.01);
   }catch(e){}
 }
-
 function snd(type){
   switch(type){
-    case'cursor': beep(440,0.05,'sine',0.06); break;
+    case'cursor':  beep(440,0.05,'sine',0.06); break;
     case'confirm': beep(660,0.08,'sine',0.1); break;
-    case'cancel': beep(220,0.1,'sine',0.1); break;
-    case'step': beep(180,0.04,'sine',0.02); break;
-    case'attack': beep(200,0.18,'sawtooth',0.15,50); break;
-    case'magic': beep(400,0.3,'sine',0.18,900); break;
-    case'heal': beep(550,0.08,'sine',0.12); beep(700,0.12,'sine',0.12,null,0.1); beep(880,0.2,'sine',0.12,null,0.2); break;
-    case'encounter': [200,150,250,300].forEach((f,i)=>beep(f,0.12,'square',0.12,null,i*0.1)); break;
+    case'cancel':  beep(220,0.1,'sine',0.1); break;
+    case'step':    beep(180,0.04,'sine',0.02); break;
+    case'attack':  beep(200,0.18,'sawtooth',0.15,50); break;
+    case'magic':   beep(400,0.3,'sine',0.18,900); break;
+    case'heal':    beep(550,0.08,'sine',0.12);beep(700,0.12,'sine',0.12,null,0.1);beep(880,0.2,'sine',0.12,null,0.2); break;
+    case'encounter':[200,150,250,300].forEach((f,i)=>beep(f,0.12,'square',0.12,null,i*0.1)); break;
     case'levelup': [523,659,784,1047].forEach((f,i)=>beep(f,0.18,'sine',0.2,null,i*0.12)); break;
-    case'gameover': beep(300,1.5,'sawtooth',0.18,40); break;
+    case'gameover':beep(300,1.5,'sawtooth',0.18,40); break;
     case'victory': [523,523,523,523,415,466,523,466,523].forEach((f,i)=>beep(f,0.15,'sine',0.2,null,i*0.14)); break;
   }
 }
@@ -104,535 +94,786 @@ function snd(type){
 // ===== INPUT =====
 const keys={}, keyJust={};
 document.addEventListener('keydown',e=>{
-  if(!keys[e.key]){ keyJust[e.key]=true; keys[e.key]=true; }
+  if(!keys[e.key]){keyJust[e.key]=true;keys[e.key]=true;}
   e.preventDefault();
 });
-document.addEventListener('keyup',e=>{ keys[e.key]=false; });
+document.addEventListener('keyup',e=>{keys[e.key]=false;});
 
-// ===== MOUSE INPUT =====
-// Canvasの実際の表示サイズとゲーム座標のスケール変換
+let mouseX=0, mouseY=0;
 function getCanvasPos(e){
   const r=C.getBoundingClientRect();
-  const scaleX=640/r.width, scaleY=480/r.height;
-  const cx=(e.clientX-r.left)*scaleX;
-  const cy=(e.clientY-r.top)*scaleY;
-  return{x:cx,y:cy};
+  return{x:(e.clientX-r.left)*640/r.width, y:(e.clientY-r.top)*480/r.height};
 }
 
-// 仮想Dパッドの定義（オーバーワールド用）
-const DPAD={
-  size:52, margin:10,
-  get x(){return 640-this.size*3-this.margin*2;},
-  get y(){return 480-this.size*3-this.margin*2;},
-};
-function dpadBtn(dir){ // 0=up,1=right,2=down,3=left,4=center(Z),5=menu(Enter)
-  const s=DPAD.size, m=DPAD.margin, bx=DPAD.x, by=DPAD.y;
-  switch(dir){
-    case 0: return{x:bx+s,y:by,    w:s,h:s};
-    case 1: return{x:bx+s*2,y:by+s,w:s,h:s};
-    case 2: return{x:bx+s,y:by+s*2,w:s,h:s};
-    case 3: return{x:bx,   y:by+s, w:s,h:s};
-    case 4: return{x:bx+s, y:by+s, w:s,h:s}; // Zボタン
-    case 5: return{x:bx,   y:by,   w:s,h:s}; // メニュー
+// =====================================================================
+// ===== ASYNC INPUT BRIDGE ============================================
+// =====================================================================
+// ゲームロジックの「次のキー入力を待つ」を Promise で実現する仕組み。
+// waitKey() を呼ぶと Promise が返り、次のキー/クリックで resolve される。
+// ゲームループが毎フレーム flushInput() を呼ぶことで橋渡しをする。
+
+let _inputResolve = null;   // 現在待機中の resolve 関数
+
+function waitKey() {
+  return new Promise(r => { _inputResolve = r; });
+}
+
+async function waitConfirm() {
+  while(true) {
+    const k = await waitKey();
+    if(k==='z'||k==='Z'||k==='Enter') return;
+    if(k?.type==='click') return;
   }
+}
+
+// ゲームループから毎フレーム呼ばれる
+function flushInput() {
+  if(!_inputResolve) return;
+  const order=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',
+               'z','Z','x','X','Enter','Escape','Backspace'];
+  for(const k of order) {
+    if(keyJust[k]){ const r=_inputResolve; _inputResolve=null; r(k); return; }
+  }
+}
+
+// マウス/タッチ
+C.addEventListener('mousemove',e=>{
+  const{x,y}=getCanvasPos(e); mouseX=x; mouseY=y;
+  handleHover(x,y);
+});
+C.addEventListener('mousedown',e=>{
+  if(AC&&AC.state==='suspended')AC.resume();
+  const{x,y}=getCanvasPos(e);
+  handleClick(x,y);
+});
+C.addEventListener('mouseup',e=>{ for(const k in dpadHeld) delete dpadHeld[k]; });
+C.addEventListener('mouseleave',e=>{ for(const k in dpadHeld) delete dpadHeld[k]; });
+C.addEventListener('touchstart',e=>{
+  e.preventDefault(); if(AC&&AC.state==='suspended')AC.resume();
+  const t=e.touches[0],r=C.getBoundingClientRect();
+  handleClick((t.clientX-r.left)*640/r.width,(t.clientY-r.top)*480/r.height);
+},{passive:false});
+C.addEventListener('touchend',e=>{ e.preventDefault(); for(const k in dpadHeld) delete dpadHeld[k]; },{passive:false});
+
+const dpadHeld={};
+let dpadMoveTimer=0;
+const DPAD={size:52,get x(){return 640-this.size*3-20;},get y(){return 480-this.size*3-20;}};
+function dpadBtn(dir){
+  const s=DPAD.size,bx=DPAD.x,by=DPAD.y;
+  return [{x:bx+s,y:by,w:s,h:s},{x:bx+s*2,y:by+s,w:s,h:s},{x:bx+s,y:by+s*2,w:s,h:s},
+          {x:bx,y:by+s,w:s,h:s},{x:bx+s,y:by+s,w:s,h:s},{x:bx,y:by,w:s,h:s}][dir];
 }
 function inRect(px,py,r){return px>=r.x&&px<r.x+r.w&&py>=r.y&&py<r.y+r.h;}
 
-// 移動用の連続押し状態
-const dpadHeld={};
-let dpadMoveTimer=0;
-let mouseX=0, mouseY=0;
-
-C.addEventListener('mousemove',e=>{
-  const{x,y}=getCanvasPos(e);
-  mouseX=x; mouseY=y;
-  if(gState==='battle') handleBattleHover(x,y);
-});
-
-function handleBattleHover(x,y){
-  if(bPhase==='selecting'){
-    BCMDS.forEach((c,i)=>{
-      if(x>=510&&x<=635&&y>=315+i*38&&y<=315+(i+1)*38){
-        if(bCursor!==i){bCursor=i;snd('cursor');}
-      }
+function handleClick(x,y) {
+  // Dパッド（オーバーワールド時）
+  if(gState==='overworld'&&!fieldMenu){
+    ['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'].forEach((d,i)=>{
+      if(inRect(x,y,dpadBtn(i))){dpadHeld[d]=true;keyJust[d]=true;}
     });
-  }else if(bPhase==='spellmenu'){
-    player.spells.forEach((sp,i)=>{
-      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
-        if(bSubCursor!==i){bSubCursor=i;snd('cursor');}
-      }
-    });
-  }else if(bPhase==='itemmenu'){
-    const items=player.items.filter(it=>it.count>0);
-    items.forEach((it,i)=>{
-      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
-        if(bSubCursor!==i){bSubCursor=i;snd('cursor');}
-      }
-    });
-  }
-}
-
-C.addEventListener('mousedown',e=>{
-  if(AC&&AC.state==='suspended') AC.resume();
-  const{x,y}=getCanvasPos(e);
-  handleMouseDown(x,y);
-});
-C.addEventListener('mouseup',e=>{
-  for(const k in dpadHeld) delete dpadHeld[k];
-});
-C.addEventListener('mouseleave',e=>{
-  for(const k in dpadHeld) delete dpadHeld[k];
-});
-
-// タッチ対応
-C.addEventListener('touchstart',e=>{
-  e.preventDefault();
-  if(AC&&AC.state==='suspended') AC.resume();
-  const t=e.touches[0];
-  const r=C.getBoundingClientRect();
-  const scaleX=640/r.width, scaleY=480/r.height;
-  const cx=(t.clientX-r.left)*scaleX, cy=(t.clientY-r.top)*scaleY;
-  handleMouseDown(cx,cy);
-},{passive:false});
-C.addEventListener('touchend',e=>{
-  e.preventDefault();
-  for(const k in dpadHeld) delete dpadHeld[k];
-},{passive:false});
-
-function handleMouseDown(x,y){
-  switch(gState){
-    case'title': keyJust['z']=true; break;
-    case'overworld': handleOverworldClick(x,y); break;
-    case'town': handleTownClick(x,y); break;
-    case'battle': handleBattleClick(x,y); break;
-    case'password': handlePasswordClick(x,y); break;
-    case'ending': keyJust['z']=true; break;
-  }
-}
-
-function handleOverworldClick(x,y){
-  if(fieldMenu){
-    // フィールドメニュークリック
-    FIELD_OPTS.forEach((o,i)=>{
-      if(x>=388&&x<=628&&y>=302+i*28&&y<=302+(i+1)*28){
-        fieldMenuCursor=i; keyJust['z']=true;
-      }
-    });
+    if(inRect(x,y,dpadBtn(4))){keyJust['z']=true;}
+    if(inRect(x,y,dpadBtn(5))){keyJust['Enter']=true;}
     return;
   }
-  // Dパッドボタン
-  const dirs=['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'];
-  dirs.forEach((d,i)=>{
-    const b=dpadBtn(i);
-    if(inRect(x,y,b)){dpadHeld[d]=true;keyJust[d]=true;snd('step');}
-  });
-  // Zボタン（中央）
-  const zb=dpadBtn(4);
-  if(inRect(x,y,zb)) keyJust['z']=true;
-  // メニューボタン
-  const mb=dpadBtn(5);
-  if(inRect(x,y,mb)){keyJust['Enter']=true;}
-}
-
-function handleTownClick(x,y){
-  if(townPhase==='menu'){
-    TOWN_OPTS.forEach((o,i)=>{
-      if(x>=158&&x<=500&&y>=372+i*32&&y<=372+(i+1)*32){
-        townCursor=i; keyJust['z']=true;
-      }
-    });
-    if(x>=100&&x<=540&&y>=380&&y<=455) {} // 背景クリックは無視
-  }else{
-    if(townMsgT>70) keyJust['z']=true;
+  // それ以外は汎用クリックとしてinput resolveに流す
+  if(_inputResolve){
+    const r=_inputResolve; _inputResolve=null; r({type:'click',x,y});
   }
 }
 
-function handleBattleClick(x,y){
-  if(bPhase==='selecting'){
-    BCMDS.forEach((c,i)=>{
-      if(x>=510&&x<=635&&y>=315+i*38&&y<=315+(i+1)*38){
-        bCursor=i; keyJust['z']=true;
+// メニューホバー → hover イベントを input stream に注入
+function handleHover(x,y) {
+  if(!_inputResolve||!ui.menu) return;
+  const {items,mx=510,my=315,ih=38}=ui.menu;
+  for(let i=0;i<items.length;i++){
+    if(x>=mx&&x<=mx+125&&y>=my+i*ih&&y<my+(i+1)*ih){
+      if(i!==ui.menu.cursor){
+        const r=_inputResolve; _inputResolve=null;
+        r({type:'hover',index:i});
       }
-    });
-  }else if(bPhase==='spellmenu'){
-    player.spells.forEach((sp,i)=>{
-      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
-        bSubCursor=i; keyJust['z']=true;
-      }
-    });
-    if(x>=510&&x<=635&&y>=440&&y<=470) keyJust['x']=true;
-  }else if(bPhase==='itemmenu'){
-    const items=player.items.filter(it=>it.count>0);
-    items.forEach((it,i)=>{
-      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
-        bSubCursor=i; keyJust['z']=true;
-      }
-    });
-    if(x>=510&&x<=635&&y>=440&&y<=470) keyJust['x']=true;
-  }else if(bPhase==='executing'||bPhase==='enemy_turn'){
-    if(bMsgDone&&x>=220&&x<=500&&y>=303&&y<=413) keyJust['z']=true;
-  }else if(bPhase==='won'||bPhase==='lost'){
-    if(bResultT>80) keyJust['z']=true;
-  }
-}
-
-function handlePasswordClick(x,y){
-  if(pwMode==='show'){
-    keyJust['z']=true; return;
-  }
-  // キーボードグリッド
-  const KBX=30,KBY=130,KW=74,KH=34;
-  if(x>=KBX&&x<=KBX+KW*KB_COLS&&y>=KBY+8&&y<=KBY+KB_ROWS*KH+8){
-    const c=Math.floor((x-KBX)/KW);
-    const r=Math.floor((y-KBY-8)/KH);
-    if(r>=0&&r<KB_ROWS&&c>=0&&c<KB_COLS){
-      pwKbRow=r; pwKbCol=c; keyJust['z']=true;
+      break;
     }
   }
-  // 入力スロットのバックスペース（スロットをクリックで消す）
-  for(let i=0;i<20;i++){
-    const sx=42+i*29,sy=82;
-    if(x>=sx&&x<=sx+26&&y>=sy&&y<=sy+30&&i<pwInputPos){
-      // クリックしたスロット位置まで削除
-      while(pwInputPos>i){pwInputPos--;pwInputArr[pwInputPos]='';}
-      snd('cancel'); return;
-    }
-  }
-  // 戻るボタン（左下の「もどる」）
-  if(x>=36&&x<=126&&y>=414&&y<=450){ gState=pwFromState; snd('cancel'); return; }
-  // 決定ボタンエリア（下部）
-  if(y>=408&&y<=448) keyJust['Enter']=true;
 }
 
-// Dパッドの連続移動処理（mousedown保持中）
-function updateDpadHeld(){
-  if(gState!=='overworld'||fieldMenu) return;
-  dpadMoveTimer++;
-  if(dpadMoveTimer>=12){
-    dpadMoveTimer=0;
-    const dirs=['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'];
-    dirs.forEach(d=>{ if(dpadHeld[d]) keyJust[d]=true; });
-  }
-}
+// =====================================================================
+// ===== UI DRAW STATE =================================================
+// =====================================================================
+// async 関数がここに書き込み、draw 関数が読み取る。
+// ロジックと描画の唯一の接点。
 
-// ===== Dパッド描画 =====
-function drawDpad(){
-  const dirs=['↑','→','↓','←'];
-  const labels=['↑','→','↓','←'];
-  dirs.forEach((d,i)=>{
-    const b=dpadBtn(i);
-    ctx.fillStyle='rgba(0,0,0,0.5)';
-    ctx.fillRect(b.x,b.y,b.w,b.h);
-    ctx.strokeStyle='rgba(255,255,255,0.4)';
-    ctx.lineWidth=1;ctx.strokeRect(b.x,b.y,b.w,b.h);
-    ctx.fillStyle='rgba(255,255,255,0.7)';
-    ctx.font='bold 22px monospace';ctx.textAlign='center';
-    ctx.fillText(labels[i],b.x+b.w/2,b.y+b.h/2+8);
-  });
-  // Zボタン（中央：決定）
-  const zb=dpadBtn(4);
-  ctx.fillStyle='rgba(0,80,160,0.6)';ctx.fillRect(zb.x,zb.y,zb.w,zb.h);
-  ctx.strokeStyle='rgba(100,180,255,0.6)';ctx.lineWidth=1;ctx.strokeRect(zb.x,zb.y,zb.w,zb.h);
-  ctx.fillStyle='rgba(180,220,255,0.9)';ctx.font='bold 13px monospace';
-  ctx.fillText('決定',zb.x+zb.w/2,zb.y+zb.h/2+5);
-  // メニューボタン
-  const mb=dpadBtn(5);
-  ctx.fillStyle='rgba(60,40,0,0.6)';ctx.fillRect(mb.x,mb.y,mb.w,mb.h);
-  ctx.strokeStyle='rgba(200,160,80,0.5)';ctx.lineWidth=1;ctx.strokeRect(mb.x,mb.y,mb.w,mb.h);
-  ctx.fillStyle='rgba(220,180,80,0.9)';ctx.font='bold 11px monospace';
-  ctx.fillText('メニュー',mb.x+mb.w/2,mb.y+mb.h/2+4);
-  ctx.textAlign='left';
-}
+let gState='title'; // draw ループが参照
+let fieldMenu=false, fieldMenuCursor=0;
+let animT=0; // 汎用アニメタイマー
 
-// ===== GAME STATE =====
-let gState='title'; // title,overworld,town,battle,ending
+const ui = {
+  // メッセージウィンドウ
+  msgLines: [],      // 表示中テキスト（行配列）
+  msgDone:  false,   // タイプライター完了？（▼表示用）
 
-// ===== UTILITY =====
-function wrapText(text,maxW){
-  if(!text)return[];
-  const lines=[], parts=text.split('\n');
-  parts.forEach(p=>{
-    for(let i=0;i<p.length;i+=maxW) lines.push(p.slice(i,i+maxW));
-  });
-  return lines.slice(0,4);
-}
+  // 汎用メニュー（バトルコマンド・まほう・どうぐ等）
+  menu: null,        // {items, cursor, title, mx, my, ih}
 
-function lerp(a,b,t){return a+(b-a)*t;}
+  // バトル固有
+  battleEnemy: null, // 現在の敵オブジェクト
+  battleResult: null,// {exp, gold, levelUp, newLevel}
 
-// ===== DRAW UTILITY =====
+  // プレイヤーのフラッシュ
+  playerFlash: 0,
+};
+
+// =====================================================================
+// ===== DRAW UTILITIES ================================================
+// =====================================================================
 function win(x,y,w,h,alpha=1){
   ctx.globalAlpha=alpha;
-  ctx.fillStyle='#000b44';
-  ctx.fillRect(x,y,w,h);
-  ctx.strokeStyle='#ffffff';ctx.lineWidth=3;
-  ctx.strokeRect(x+2,y+2,w-4,h-4);
-  ctx.strokeStyle='#2244aa';ctx.lineWidth=1;
-  ctx.strokeRect(x+4,y+4,w-8,h-8);
+  ctx.fillStyle='#000b44'; ctx.fillRect(x,y,w,h);
+  ctx.strokeStyle='#ffffff';ctx.lineWidth=3;ctx.strokeRect(x+2,y+2,w-4,h-4);
+  ctx.strokeStyle='#2244aa';ctx.lineWidth=1;ctx.strokeRect(x+4,y+4,w-8,h-8);
   ctx.globalAlpha=1;
 }
-
 function txt(s,x,y,size=16,color='#ffffff',align='left'){
   ctx.font=`bold ${size}px "Courier New",monospace`;
-  ctx.fillStyle=color; ctx.textAlign=align;
-  ctx.fillText(s,x,y); ctx.textAlign='left';
+  ctx.fillStyle=color;ctx.textAlign=align;ctx.fillText(s,x,y);ctx.textAlign='left';
 }
-
 function hpBar(label,x,y,w,cur,max){
   txt(label,x,y+11,13,'#ffffff');
   const bx=x+32,bw=w-32,bh=11;
-  ctx.fillStyle='#222'; ctx.fillRect(bx,y,bw,bh);
+  ctx.fillStyle='#222';ctx.fillRect(bx,y,bw,bh);
   const r=Math.max(0,cur/max);
   ctx.fillStyle=r>0.5?'#00cc44':r>0.25?'#ffcc00':'#ff3300';
   ctx.fillRect(bx,y,Math.floor(bw*r),bh);
   ctx.strokeStyle='#555';ctx.lineWidth=1;ctx.strokeRect(bx,y,bw,bh);
   txt(`${cur}/${max}`,bx+bw+4,y+10,11,'#ffff88');
 }
+function wrapText(text,maxW){
+  if(!text)return[];
+  const lines=[],parts=text.split('\n');
+  parts.forEach(p=>{for(let i=0;i<p.length;i+=maxW)lines.push(p.slice(i,i+maxW));});
+  return lines.slice(0,4);
+}
 
 // ===== TILE DRAWING =====
 function drawTile(type,px,py){
   const colors={[G]:'#448833',[W]:'#1133bb',[M]:'#776655',[T]:'#ccbb77',[D]:'#330022',[F]:'#224422',[X]:'#443322'};
-  ctx.fillStyle=colors[type]||'#333'; ctx.fillRect(px,py,TW,TH);
-
-  if(type===G){
-    ctx.fillStyle='#55aa44';
-    [[2,6,4,2],[12,2,3,2],[20,14,4,2],[8,20,5,2],[25,8,3,2]].forEach(([rx,ry,rw,rh])=>ctx.fillRect(px+rx,py+ry,rw,rh));
-  }else if(type===W){
-    ctx.fillStyle='#2244dd';
-    ctx.fillRect(px+3,py+7,10,3); ctx.fillRect(px+16,py+18,12,3);
-    ctx.fillStyle='#4466ff'; ctx.fillRect(px+8,py+3,6,2);
-  }else if(type===M){
-    ctx.fillStyle='#887766';
-    ctx.beginPath(); ctx.moveTo(px+16,py+3); ctx.lineTo(px+3,py+29); ctx.lineTo(px+29,py+29); ctx.fill();
-    ctx.fillStyle='#bbaa99';
-    ctx.beginPath(); ctx.moveTo(px+16,py+3); ctx.lineTo(px+12,py+14); ctx.lineTo(px+20,py+14); ctx.fill();
-  }else if(type===F){
-    ctx.fillStyle='#336633'; ctx.beginPath(); ctx.arc(px+16,py+15,11,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#44aa44'; ctx.beginPath(); ctx.arc(px+16,py+11,9,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#553322'; ctx.fillRect(px+13,py+24,6,7);
-  }else if(type===T){
-    ctx.fillStyle='#ddcc88'; ctx.fillRect(px,py,TW,TH);
-    ctx.fillStyle='#cc7733'; ctx.fillRect(px+6,py+13,20,16);
-    ctx.fillStyle='#cc3322';
-    ctx.beginPath(); ctx.moveTo(px+4,py+14); ctx.lineTo(px+16,py+3); ctx.lineTo(px+28,py+14); ctx.fill();
-    ctx.fillStyle='#7799cc'; ctx.fillRect(px+12,py+20,7,8);
-    ctx.fillStyle='#cc9922'; ctx.fillRect(px+12,py+20,7,2);
-  }else if(type===D){
-    ctx.fillStyle='#220011'; ctx.fillRect(px,py,TW,TH);
-    ctx.fillStyle='#440033'; ctx.fillRect(px+9,py+7,14,18);
-    ctx.fillStyle='#110011';
-    ctx.beginPath(); ctx.arc(px+16,py+18,6,Math.PI,0); ctx.fill();
-    ctx.fillStyle='#ff0000'; ctx.fillRect(px+13,py+13,2,2); ctx.fillRect(px+17,py+13,2,2);
-  }else if(type===X){
-    ctx.fillStyle='#554433'; ctx.fillRect(px,py,TW,TH);
-    ctx.fillStyle='#443322';
-    for(let i=0;i<4;i++) for(let j=0;j<4;j++) if((i+j)%2===0) ctx.fillRect(px+i*8,py+j*8,8,8);
-  }
+  ctx.fillStyle=colors[type]||'#333';ctx.fillRect(px,py,TW,TH);
+  if(type===G){ctx.fillStyle='#55aa44';[[2,6,4,2],[12,2,3,2],[20,14,4,2],[8,20,5,2],[25,8,3,2]].forEach(([rx,ry,rw,rh])=>ctx.fillRect(px+rx,py+ry,rw,rh));}
+  else if(type===W){ctx.fillStyle='#2244dd';ctx.fillRect(px+3,py+7,10,3);ctx.fillRect(px+16,py+18,12,3);ctx.fillStyle='#4466ff';ctx.fillRect(px+8,py+3,6,2);}
+  else if(type===F){ctx.fillStyle='#336633';ctx.beginPath();ctx.arc(px+16,py+15,11,0,Math.PI*2);ctx.fill();ctx.fillStyle='#44aa44';ctx.beginPath();ctx.arc(px+16,py+11,9,0,Math.PI*2);ctx.fill();ctx.fillStyle='#553322';ctx.fillRect(px+13,py+24,6,7);}
+  else if(type===T){ctx.fillStyle='#ddcc88';ctx.fillRect(px,py,TW,TH);ctx.fillStyle='#cc7733';ctx.fillRect(px+6,py+13,20,16);ctx.fillStyle='#cc3322';ctx.beginPath();ctx.moveTo(px+4,py+14);ctx.lineTo(px+16,py+3);ctx.lineTo(px+28,py+14);ctx.fill();ctx.fillStyle='#7799cc';ctx.fillRect(px+12,py+20,7,8);ctx.fillStyle='#cc9922';ctx.fillRect(px+12,py+20,7,2);}
+  else if(type===D){ctx.fillStyle='#220011';ctx.fillRect(px,py,TW,TH);ctx.fillStyle='#440033';ctx.fillRect(px+9,py+7,14,18);ctx.fillStyle='#110011';ctx.beginPath();ctx.arc(px+16,py+18,6,Math.PI,0);ctx.fill();ctx.fillStyle='#ff0000';ctx.fillRect(px+13,py+13,2,2);ctx.fillRect(px+17,py+13,2,2);}
+  else if(type===X){ctx.fillStyle='#554433';ctx.fillRect(px,py,TW,TH);ctx.fillStyle='#443322';for(let i=0;i<4;i++)for(let j=0;j<4;j++)if((i+j)%2===0)ctx.fillRect(px+i*8,py+j*8,8,8);}
 }
 
-// ===== PLAYER SPRITE =====
+// ===== SPRITES =====
 function drawHero(px,py,wf){
   const b=wf?2:0;
-  // Shadow
-  ctx.fillStyle='rgba(0,0,0,0.25)'; ctx.beginPath(); ctx.ellipse(px+16,py+31,8,3,0,0,Math.PI*2); ctx.fill();
-  // Cape
-  ctx.fillStyle='#cc3322'; ctx.fillRect(px+7,py+15,18,13);
-  // Body
-  ctx.fillStyle='#3366cc'; ctx.fillRect(px+9,py+16,14,12);
-  // Head
-  ctx.fillStyle='#ffcc88'; ctx.beginPath(); ctx.arc(px+16,py+11,8,0,Math.PI*2); ctx.fill();
-  // Helmet
-  ctx.fillStyle='#bb9933'; ctx.fillRect(px+8,py+5,16,7);
-  ctx.fillStyle='#ddbb55'; ctx.fillRect(px+9,py+4,14,4);
-  // Plume
-  ctx.fillStyle='#ff4444'; ctx.fillRect(px+13,py+1,6,5);
-  // Eyes
-  ctx.fillStyle='#332200'; ctx.fillRect(px+12,py+11,2,2); ctx.fillRect(px+18,py+11,2,2);
-  // Sword
-  ctx.fillStyle='#ccddee'; ctx.fillRect(px+24,py+13,3,15);
-  ctx.fillStyle='#ddaa33'; ctx.fillRect(px+21,py+17,9,3);
-  ctx.fillStyle='#ffffaa'; ctx.fillRect(px+25,py+13,1,3);
-  // Shield
-  ctx.fillStyle='#cc4422'; ctx.beginPath(); ctx.arc(px+7,py+19,5,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#ffcc44'; ctx.beginPath(); ctx.arc(px+7,py+19,2,0,Math.PI*2); ctx.fill();
-  // Legs
-  ctx.fillStyle='#224488';
-  ctx.fillRect(px+9,py+27,6,5+b); ctx.fillRect(px+17,py+27,6,5-b);
-  // Boots
-  ctx.fillStyle='#442211';
-  ctx.fillRect(px+8,py+30+b,7,3); ctx.fillRect(px+17,py+30-b,7,3);
+  ctx.fillStyle='rgba(0,0,0,0.25)';ctx.beginPath();ctx.ellipse(px+16,py+31,8,3,0,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#cc3322';ctx.fillRect(px+7,py+15,18,13);
+  ctx.fillStyle='#3366cc';ctx.fillRect(px+9,py+16,14,12);
+  ctx.fillStyle='#ffcc88';ctx.beginPath();ctx.arc(px+16,py+11,8,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#bb9933';ctx.fillRect(px+8,py+5,16,7);ctx.fillStyle='#ddbb55';ctx.fillRect(px+9,py+4,14,4);
+  ctx.fillStyle='#ff4444';ctx.fillRect(px+13,py+1,6,5);
+  ctx.fillStyle='#332200';ctx.fillRect(px+12,py+11,2,2);ctx.fillRect(px+18,py+11,2,2);
+  ctx.fillStyle='#ccddee';ctx.fillRect(px+24,py+13,3,15);ctx.fillStyle='#ddaa33';ctx.fillRect(px+21,py+17,9,3);
+  ctx.fillStyle='#cc4422';ctx.beginPath();ctx.arc(px+7,py+19,5,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffcc44';ctx.beginPath();ctx.arc(px+7,py+19,2,0,Math.PI*2);ctx.fill();
+  ctx.fillStyle='#224488';ctx.fillRect(px+9,py+27,6,5+b);ctx.fillRect(px+17,py+27,6,5-b);
+  ctx.fillStyle='#442211';ctx.fillRect(px+8,py+30+b,7,3);ctx.fillRect(px+17,py+30-b,7,3);
 }
-
-// ===== ENEMY SPRITES =====
-function drawSlime(x,y,col,fl,t){
-  const bob=Math.sin(t*0.06)*4, c=fl?'#ffffff':col;
-  ctx.fillStyle=c;
-  ctx.beginPath(); ctx.ellipse(x,y+5+bob,36,30,0,0,Math.PI*2); ctx.fill();
-  if(!fl){ctx.fillStyle='rgba(255,255,255,0.35)';ctx.beginPath();ctx.ellipse(x-11,y-8+bob,10,8,-0.3,0,Math.PI*2);ctx.fill();}
-  ctx.fillStyle='#ffffff';
-  ctx.beginPath();ctx.ellipse(x-13,y-4+bob,6,7,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+13,y-4+bob,6,7,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#001144';
-  ctx.beginPath();ctx.ellipse(x-12,y-4+bob,3,4,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+14,y-4+bob,3,4,0,0,Math.PI*2);ctx.fill();
-  ctx.strokeStyle='#001144';ctx.lineWidth=2;
-  ctx.beginPath();ctx.arc(x,y+10+bob,9,0,Math.PI);ctx.stroke();
-}
-
-function drawBat(x,y,fl,t){
-  const c=fl?'#ffffff':'#553366', wf=Math.sin(t*0.18)*18;
-  ctx.fillStyle=c;
-  ctx.beginPath();ctx.moveTo(x-10,y);ctx.quadraticCurveTo(x-50,y-20+wf,x-65,y+5+wf);ctx.quadraticCurveTo(x-40,y+18,x-10,y+10);ctx.fill();
-  ctx.beginPath();ctx.moveTo(x+10,y);ctx.quadraticCurveTo(x+50,y-20+wf,x+65,y+5+wf);ctx.quadraticCurveTo(x+40,y+18,x+10,y+10);ctx.fill();
-  ctx.fillStyle=fl?'#ffffff':'#331144';
-  ctx.beginPath();ctx.ellipse(x,y+5,17,22,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle=c;
-  ctx.beginPath();ctx.moveTo(x-8,y-10);ctx.lineTo(x-16,y-32);ctx.lineTo(x-2,y-10);ctx.fill();
-  ctx.beginPath();ctx.moveTo(x+8,y-10);ctx.lineTo(x+16,y-32);ctx.lineTo(x+2,y-10);ctx.fill();
-  ctx.fillStyle='#ff6600';
-  ctx.beginPath();ctx.ellipse(x-7,y+1,5,5,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+7,y+1,5,5,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#000';
-  ctx.beginPath();ctx.ellipse(x-7,y+1,2,2,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+7,y+1,2,2,0,0,Math.PI*2);ctx.fill();
-}
-
-function drawSlug(x,y,fl,t){
-  const c=fl?'#ffffff':'#44aa33', bob=Math.sin(t*0.04)*3;
-  ctx.fillStyle=c;
-  ctx.beginPath();ctx.ellipse(x+5,y+10+bob,52,22,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x-38,y+2+bob,20,17,-0.2,0,Math.PI*2);ctx.fill();
-  if(!fl){ctx.fillStyle='rgba(150,255,80,0.3)';ctx.beginPath();ctx.ellipse(x+5,y+25+bob,50,8,0,0,Math.PI*2);ctx.fill();}
-  ctx.strokeStyle=fl?'#ffffff':'#226622';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(x-44,y-6+bob);ctx.quadraticCurveTo(x-55,y-28+bob,x-50,y-40+bob);ctx.stroke();
-  ctx.beginPath();ctx.moveTo(x-34,y-5+bob);ctx.quadraticCurveTo(x-28,y-30+bob,x-25,y-42+bob);ctx.stroke();
-  ctx.fillStyle='#000';
-  ctx.beginPath();ctx.arc(x-50,y-40+bob,3,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.arc(x-25,y-42+bob,3,0,Math.PI*2);ctx.fill();
-}
-
-function drawMetal(x,y,fl,t){
-  const bob=Math.sin(t*0.06)*3;
-  const gr=ctx.createRadialGradient(x-10,y-8+bob,0,x,y+bob,36);
-  if(fl){gr.addColorStop(0,'#fff');gr.addColorStop(1,'#fff');}
-  else{gr.addColorStop(0,'#eef4ff');gr.addColorStop(0.5,'#aabbcc');gr.addColorStop(1,'#667788');}
-  ctx.fillStyle=gr;
-  ctx.beginPath();ctx.ellipse(x,y+5+bob,33,28,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle=fl?'#ffffff':'#99aabb';
-  ctx.beginPath();ctx.moveTo(x,y-24+bob);ctx.lineTo(x-6,y-14+bob);ctx.lineTo(x+6,y-14+bob);ctx.fill();
-  ctx.fillStyle='#fff';
-  ctx.beginPath();ctx.ellipse(x-11,y-2+bob,5,6,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+11,y-2+bob,5,6,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#001144';
-  ctx.beginPath();ctx.ellipse(x-10,y-1+bob,2.5,3.5,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+12,y-1+bob,2.5,3.5,0,0,Math.PI*2);ctx.fill();
-}
-
-function drawBoss(x,y,fl,t){
-  const bob=Math.sin(t*0.025)*5;
-  if(!fl){
-    ctx.strokeStyle='#660000';ctx.lineWidth=3;
-    for(let i=0;i<4;i++){ctx.globalAlpha=0.25-i*0.05;ctx.beginPath();ctx.ellipse(x,y-15+bob,40+i*18,55+i*18,0,0,Math.PI*2);ctx.stroke();}
-    ctx.globalAlpha=1;
-  }
-  ctx.fillStyle=fl?'#ffffff':'#220000';
-  ctx.beginPath();ctx.moveTo(x,y-55+bob);ctx.lineTo(x-55,y+45+bob);ctx.lineTo(x+55,y+45+bob);ctx.fill();
-  ctx.fillStyle=fl?'#ffffff':'#440000';
-  ctx.beginPath();ctx.ellipse(x,y-15+bob,32,45,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle=fl?'#ffffff':'#330000';
-  ctx.beginPath();ctx.ellipse(x,y-68+bob,30,32,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle=fl?'#ffffff':'#770000';
-  ctx.beginPath();ctx.moveTo(x-18,y-84+bob);ctx.lineTo(x-38,y-115+bob);ctx.lineTo(x-6,y-78+bob);ctx.fill();
-  ctx.beginPath();ctx.moveTo(x+18,y-84+bob);ctx.lineTo(x+38,y-115+bob);ctx.lineTo(x+6,y-78+bob);ctx.fill();
-  ctx.fillStyle='#ff2200';
-  ctx.beginPath();ctx.ellipse(x-13,y-68+bob,8,9,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+13,y-68+bob,8,9,0,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#ffaa00';
-  ctx.beginPath();ctx.ellipse(x-13,y-68+bob,4,4,0,0,Math.PI*2);ctx.fill();
-  ctx.beginPath();ctx.ellipse(x+13,y-68+bob,4,4,0,0,Math.PI*2);ctx.fill();
-  ctx.strokeStyle=fl?'#ffffff':'#550000';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(x-20,y-40+bob);ctx.quadraticCurveTo(x,y-30+bob,x+20,y-40+bob);ctx.stroke();
-}
-
+function drawSlime(x,y,col,fl,t){const bob=Math.sin(t*0.06)*4,c=fl?'#ffffff':col;ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(x,y+5+bob,36,30,0,0,Math.PI*2);ctx.fill();if(!fl){ctx.fillStyle='rgba(255,255,255,0.35)';ctx.beginPath();ctx.ellipse(x-11,y-8+bob,10,8,-0.3,0,Math.PI*2);ctx.fill();}ctx.fillStyle='#ffffff';ctx.beginPath();ctx.ellipse(x-13,y-4+bob,6,7,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+13,y-4+bob,6,7,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#001144';ctx.beginPath();ctx.ellipse(x-12,y-4+bob,3,4,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+14,y-4+bob,3,4,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle='#001144';ctx.lineWidth=2;ctx.beginPath();ctx.arc(x,y+10+bob,9,0,Math.PI);ctx.stroke();}
+function drawBat(x,y,fl,t){const c=fl?'#ffffff':'#553366',wf=Math.sin(t*0.18)*18;ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(x-10,y);ctx.quadraticCurveTo(x-50,y-20+wf,x-65,y+5+wf);ctx.quadraticCurveTo(x-40,y+18,x-10,y+10);ctx.fill();ctx.beginPath();ctx.moveTo(x+10,y);ctx.quadraticCurveTo(x+50,y-20+wf,x+65,y+5+wf);ctx.quadraticCurveTo(x+40,y+18,x+10,y+10);ctx.fill();ctx.fillStyle=fl?'#ffffff':'#331144';ctx.beginPath();ctx.ellipse(x,y+5,17,22,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=c;ctx.beginPath();ctx.moveTo(x-8,y-10);ctx.lineTo(x-16,y-32);ctx.lineTo(x-2,y-10);ctx.fill();ctx.beginPath();ctx.moveTo(x+8,y-10);ctx.lineTo(x+16,y-32);ctx.lineTo(x+2,y-10);ctx.fill();ctx.fillStyle='#ff6600';ctx.beginPath();ctx.ellipse(x-7,y+1,5,5,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+7,y+1,5,5,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#000';ctx.beginPath();ctx.ellipse(x-7,y+1,2,2,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+7,y+1,2,2,0,0,Math.PI*2);ctx.fill();}
+function drawSlug(x,y,fl,t){const c=fl?'#ffffff':'#44aa33',bob=Math.sin(t*0.04)*3;ctx.fillStyle=c;ctx.beginPath();ctx.ellipse(x+5,y+10+bob,52,22,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x-38,y+2+bob,20,17,-0.2,0,Math.PI*2);ctx.fill();if(!fl){ctx.fillStyle='rgba(150,255,80,0.3)';ctx.beginPath();ctx.ellipse(x+5,y+25+bob,50,8,0,0,Math.PI*2);ctx.fill();}ctx.strokeStyle=fl?'#ffffff':'#226622';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-44,y-6+bob);ctx.quadraticCurveTo(x-55,y-28+bob,x-50,y-40+bob);ctx.stroke();ctx.beginPath();ctx.moveTo(x-34,y-5+bob);ctx.quadraticCurveTo(x-28,y-30+bob,x-25,y-42+bob);ctx.stroke();ctx.fillStyle='#000';ctx.beginPath();ctx.arc(x-50,y-40+bob,3,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.arc(x-25,y-42+bob,3,0,Math.PI*2);ctx.fill();}
+function drawMetal(x,y,fl,t){const bob=Math.sin(t*0.06)*3;const gr=ctx.createRadialGradient(x-10,y-8+bob,0,x,y+bob,36);if(fl){gr.addColorStop(0,'#fff');gr.addColorStop(1,'#fff');}else{gr.addColorStop(0,'#eef4ff');gr.addColorStop(0.5,'#aabbcc');gr.addColorStop(1,'#667788');}ctx.fillStyle=gr;ctx.beginPath();ctx.ellipse(x,y+5+bob,33,28,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=fl?'#ffffff':'#99aabb';ctx.beginPath();ctx.moveTo(x,y-24+bob);ctx.lineTo(x-6,y-14+bob);ctx.lineTo(x+6,y-14+bob);ctx.fill();ctx.fillStyle='#fff';ctx.beginPath();ctx.ellipse(x-11,y-2+bob,5,6,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+11,y-2+bob,5,6,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#001144';ctx.beginPath();ctx.ellipse(x-10,y-1+bob,2.5,3.5,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+12,y-1+bob,2.5,3.5,0,0,Math.PI*2);ctx.fill();}
+function drawBoss(x,y,fl,t){const bob=Math.sin(t*0.025)*5;if(!fl){ctx.strokeStyle='#660000';ctx.lineWidth=3;for(let i=0;i<4;i++){ctx.globalAlpha=0.25-i*0.05;ctx.beginPath();ctx.ellipse(x,y-15+bob,40+i*18,55+i*18,0,0,Math.PI*2);ctx.stroke();}ctx.globalAlpha=1;}ctx.fillStyle=fl?'#ffffff':'#220000';ctx.beginPath();ctx.moveTo(x,y-55+bob);ctx.lineTo(x-55,y+45+bob);ctx.lineTo(x+55,y+45+bob);ctx.fill();ctx.fillStyle=fl?'#ffffff':'#440000';ctx.beginPath();ctx.ellipse(x,y-15+bob,32,45,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=fl?'#ffffff':'#330000';ctx.beginPath();ctx.ellipse(x,y-68+bob,30,32,0,0,Math.PI*2);ctx.fill();ctx.fillStyle=fl?'#ffffff':'#770000';ctx.beginPath();ctx.moveTo(x-18,y-84+bob);ctx.lineTo(x-38,y-115+bob);ctx.lineTo(x-6,y-78+bob);ctx.fill();ctx.beginPath();ctx.moveTo(x+18,y-84+bob);ctx.lineTo(x+38,y-115+bob);ctx.lineTo(x+6,y-78+bob);ctx.fill();ctx.fillStyle='#ff2200';ctx.beginPath();ctx.ellipse(x-13,y-68+bob,8,9,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+13,y-68+bob,8,9,0,0,Math.PI*2);ctx.fill();ctx.fillStyle='#ffaa00';ctx.beginPath();ctx.ellipse(x-13,y-68+bob,4,4,0,0,Math.PI*2);ctx.fill();ctx.beginPath();ctx.ellipse(x+13,y-68+bob,4,4,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle=fl?'#ffffff':'#550000';ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x-20,y-40+bob);ctx.quadraticCurveTo(x,y-30+bob,x+20,y-40+bob);ctx.stroke();}
 function drawEnemy(enemy,t){
   const x=420,y=180,fl=enemy.flashTimer>0;
   switch(enemy.type){
-    case'slime': drawSlime(x,y,enemy.color,fl,t); break;
-    case'bat':   drawBat(x,y,fl,t); break;
-    case'slug':  drawSlug(x,y,fl,t); break;
-    case'metal': drawMetal(x,y,fl,t); break;
-    case'boss':  drawBoss(x,y,fl,t); break;
+    case'slime':drawSlime(x,y,enemy.color,fl,t);break;
+    case'bat':  drawBat(x,y,fl,t);break;
+    case'slug': drawSlug(x,y,fl,t);break;
+    case'metal':drawMetal(x,y,fl,t);break;
+    case'boss': drawBoss(x,y,fl,t);break;
   }
 }
 
-// ===== TITLE SCREEN =====
-let titleT=0;
+// =====================================================================
+// ===== ASYNC UTILITIES ===============================================
+// =====================================================================
+
+function sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+
+// テキストをタイプライター表示して、確定入力まで待つ
+async function typeMsg(text) {
+  const lines = text.split('\n');
+  ui.msgLines = [];
+  ui.msgDone = false;
+
+  for(const line of lines){
+    ui.msgLines.push('');
+    for(const ch of line){
+      ui.msgLines[ui.msgLines.length-1] += ch;
+      await sleep(28);
+    }
+  }
+  ui.msgDone = true;
+  await waitConfirm();
+  ui.msgLines = [];
+  ui.msgDone = false;
+}
+
+// カーソル付きメニューを表示して選択結果(index)を返す。キャンセルは -1
+// opts: { title, mx, my, ih }
+async function selectMenu(items, opts={}) {
+  const {title='',mx=510,my=315,ih=38} = opts;
+  let cursor = 0;
+  ui.menu = {items, cursor, title, mx, my, ih};
+
+  while(true){
+    const input = await waitKey();
+
+    if(input==='ArrowUp'){
+      cursor=(cursor-1+items.length)%items.length;
+      ui.menu.cursor=cursor; snd('cursor');
+    } else if(input==='ArrowDown'){
+      cursor=(cursor+1)%items.length;
+      ui.menu.cursor=cursor; snd('cursor');
+    } else if(input==='z'||input==='Z'||input==='Enter'){
+      ui.menu=null; snd('confirm'); return cursor;
+    } else if(input==='x'||input==='X'||input==='Escape'){
+      ui.menu=null; snd('cancel'); return -1;
+    } else if(input?.type==='hover'){
+      cursor=input.index; ui.menu.cursor=cursor; snd('cursor');
+    } else if(input?.type==='click'){
+      // クリックされた行を判定
+      for(let i=0;i<items.length;i++){
+        if(input.x>=mx&&input.x<=mx+125&&input.y>=my+i*ih&&input.y<my+(i+1)*ih){
+          if(i===cursor){ ui.menu=null; snd('confirm'); return i; }
+          else{ cursor=i; ui.menu.cursor=i; snd('cursor'); }
+          break;
+        }
+      }
+    }
+  }
+}
+
+// =====================================================================
+// ===== ASYNC GAME FLOWS ==============================================
+// =====================================================================
+// ここが今回の肝！バトルの流れが上から下に素直に読める。
+
+function calcDmg(atk,def){ return Math.max(1,Math.floor((atk-def)*(0.8+Math.random()*0.4))); }
+
+// ---------- バトル ----------
+async function runBattle(enemyDef) {
+  const enemy = {...enemyDef, flashTimer:0};
+  ui.battleEnemy = enemy;
+  ui.battleResult = null;
+  gState = 'battle';
+  snd('encounter');
+
+  await typeMsg(`${enemy.name}が\nあらわれた！`);
+
+  // ===== メインループ =====
+  while(true){
+
+    // ----- プレイヤーターン -----
+    const cmd = await selectMenu(['たたかう','まほう','どうぐ','にげる'],
+                                 {mx:510, my:315, ih:38});
+
+    if(cmd === 0) {                        // ── たたかう
+      const d = calcDmg(player.atk, enemy.def);
+      enemy.hp = Math.max(0, enemy.hp-d);
+      enemy.flashTimer=20; snd('attack');
+      await typeMsg(`${player.name}の\nこうげき！\n${enemy.name}に ${d}の\nダメージ！`);
+    }
+    else if(cmd === 1) {                   // ── まほう
+      const spIdx = await selectMenu(
+        player.spells.map(s=>`${s.name}(${s.mp}MP)`),
+        {title:'まほう', mx:510, my:330, ih:38}
+      );
+      if(spIdx >= 0){
+        const sp = player.spells[spIdx];
+        if(player.mp < sp.mp){
+          await typeMsg('MPが　たりない！');
+        } else {
+          player.mp -= sp.mp;
+          if(sp.type==='heal'){
+            const h = Math.floor(sp.power*(0.8+Math.random()*0.4));
+            player.hp = Math.min(player.maxHp, player.hp+h);
+            snd('heal');
+            await typeMsg(`${player.name}は ${sp.name}を\nとなえた！\nHPが ${h} かいふく！`);
+          } else {
+            const d = Math.floor(sp.power*(0.8+Math.random()*0.4));
+            enemy.hp = Math.max(0, enemy.hp-d);
+            enemy.flashTimer=25; snd('magic');
+            await typeMsg(`${player.name}は ${sp.name}を\nとなえた！\n${enemy.name}に ${d}の\nほのおダメージ！`);
+          }
+        }
+      }
+    }
+    else if(cmd === 2) {                   // ── どうぐ
+      const usable = player.items.filter(i=>i.count>0);
+      if(!usable.length){
+        await typeMsg('どうぐが\nない！');
+      } else {
+        const itIdx = await selectMenu(
+          usable.map(i=>`${i.name} x${i.count}`),
+          {title:'どうぐ', mx:510, my:330, ih:38}
+        );
+        if(itIdx >= 0){
+          const item = usable[itIdx];
+          const h = 28+Math.random()*12|0;
+          player.hp = Math.min(player.maxHp, player.hp+h);
+          item.count--; snd('heal');
+          await typeMsg(`${player.name}は ${item.name}を\nつかった！\nHPが ${h} かいふく！`);
+        }
+      }
+    }
+    else if(cmd === 3 || cmd === -1) {     // ── にげる
+      if(enemy.isBoss){
+        await typeMsg('にげられない！');
+      } else if(Math.random() < 0.65){
+        ui.battleEnemy=null; gState='overworld'; return 'fled';
+      } else {
+        await typeMsg('にげられなかった！');
+      }
+    }
+
+    // ----- 敵撃破チェック -----
+    if(enemy.hp <= 0){
+      const expGain = enemy.exp, goldGain = enemy.gold;
+      player.exp   += expGain;
+      player.gold  += goldGain;
+
+      let levelUp=false, newLevel=player.level;
+      while(player.exp >= player.expNext){
+        player.level++;
+        player.maxHp  += 8+Math.random()*5|0;
+        player.maxMp  += 2;
+        player.hp      = player.maxHp;
+        player.mp      = player.maxMp;
+        player.atk    += 3+Math.random()*2|0;
+        player.def    += 1+Math.random()*2|0;
+        player.expNext = Math.floor(player.expNext*1.75);
+        levelUp=true; newLevel=player.level; snd('levelup');
+      }
+      ui.battleResult = {expGain, goldGain, levelUp, newLevel};
+      snd('victory');
+      await typeMsg(`${enemy.name}を　たおした！\n${expGain} EXP  ${goldGain} G\nかくとく！`);
+      if(levelUp) await typeMsg(`レベルが　${newLevel}に\nあがった！`);
+      ui.battleEnemy=null; ui.battleResult=null;
+      gState='overworld'; return 'won';
+    }
+
+    // ----- 敵ターン -----
+    let d, msg;
+    if(enemy.isBoss && Math.random()<0.3){
+      d = 15+Math.random()*18|0;
+      msg = `${enemy.name}は\nまじゅつを　となえた！\nゆうしゃに ${d}の\nダメージ！`;
+    } else {
+      d = calcDmg(enemy.atk, player.def);
+      msg = `${enemy.name}の\nこうげき！\nゆうしゃに ${d}の\nダメージ！`;
+    }
+    player.hp = Math.max(0, player.hp-d);
+    ui.playerFlash=18; snd('attack');
+    await typeMsg(msg);
+
+    // ----- 全滅チェック -----
+    if(player.hp <= 0){
+      snd('gameover');
+      await typeMsg('ゆうしゃは\nたおれた...');
+      player.hp  = player.maxHp;
+      player.mp  = player.maxMp;
+      player.x=2; player.y=1;
+      ui.battleEnemy=null; gState='overworld'; return 'lost';
+    }
+  }
+}
+
+// ---------- 町 ----------
+async function runTown() {
+  gState = 'town';
+
+  while(true){
+    const choice = await selectMenu(
+      ['やどやで　やすむ（10G）','やくそうを　かう（20G）','まちを　でる'],
+      {mx:158, my:372, ih:32}
+    );
+
+    if(choice === 0){                      // ── やどや
+      if(player.gold >= 10){
+        player.gold -= 10;
+        player.hp = player.maxHp; player.mp = player.maxMp;
+        snd('heal');
+        await typeMsg('ぐっすり　ねむれた！\nHP・MPが　かいふくした！');
+      } else {
+        await typeMsg('Gが　たりません...');
+      }
+    }
+    else if(choice === 1){                 // ── どうぐや
+      if(player.gold >= 20){
+        player.gold -= 20;
+        const y=player.items.find(i=>i.name==='やくそう');
+        if(y) y.count++; else player.items.push({name:'やくそう',count:1});
+        await typeMsg('やくそうを　１こ\nかいました！');
+      } else {
+        await typeMsg('Gが　たりません...');
+      }
+    }
+    else {                                 // ── でる / キャンセル
+      gState = 'overworld'; return;
+    }
+  }
+}
+
+// ---------- フィールドメニュー ----------
+const FIELD_OPTS=['ふっかつの　じゅもんを　みる','じゅもんを　にゅうりょくする','とじる'];
+async function runFieldMenu(){
+  fieldMenu=true; fieldMenuCursor=0;
+  const choice = await selectMenu(FIELD_OPTS,{mx:388,my:302,ih:28});
+  fieldMenu=false;
+  if(choice===0) await runPassword('show');
+  else if(choice===1) await runPassword('input');
+}
+
+// ---------- タイトル ----------
+async function runTitle(){
+  gState='title';
+  await waitConfirm();
+  snd('confirm');
+}
+
+// ---------- エンディング ----------
+async function runEnding(){
+  gState='ending';
+  await sleep(3000);
+  await waitConfirm();
+  gState='title';
+}
+
+// ---------- オーバーワールド ----------
+// 移動はゲームループが処理。「イベント発生」を Promise で受け取る。
+let _owResolve = null;
+function fireOverworldEvent(ev){ if(_owResolve){const r=_owResolve;_owResolve=null;r(ev);} }
+function waitOverworldEvent(){ return new Promise(r=>{_owResolve=r;}); }
+
+async function runOverworld(){
+  gState='overworld';
+  while(true){
+    const ev = await waitOverworldEvent();
+    switch(ev.type){
+      case'encounter': await runBattle(ev.enemy); gState='overworld'; break;
+      case'enterTown': await runTown();            gState='overworld'; break;
+      case'enterDungeon':
+        const result = await runBattle({...BOSS,hp:BOSS.hp});
+        if(result==='won'){ await runEnding(); return; }
+        gState='overworld'; break;
+      case'menu': await runFieldMenu(); break;
+    }
+  }
+}
+
+// ---------- トップレベル ----------
+async function runGame(){
+  while(true){
+    await runTitle();
+    player.hp=player.maxHp; player.mp=player.maxMp; player.x=2; player.y=1;
+    await runOverworld();
+  }
+}
+
+// =====================================================================
+// ===== PASSWORD SYSTEM (旧来の実装をそのまま流用) ====================
+// =====================================================================
+const SPELL_CHARS='アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビ';
+function bitsWrite(arr,pos,val,bits){for(let i=bits-1;i>=0;i--){arr[pos+bits-1-i]=(val>>i)&1;}return pos+bits;}
+function bitsRead(arr,pos,bits){let v=0;for(let i=0;i<bits;i++)v=(v<<1)|arr[pos+i];return[v,pos+bits];}
+function encodePassword(){
+  const bits=new Array(120).fill(0);
+  const yaku=(player.items.find(i=>i.name==='やくそう')||{count:0}).count;
+  let p=0;
+  p=bitsWrite(bits,p,Math.min(player.level,127),7);p=bitsWrite(bits,p,Math.min(player.hp,1023),10);
+  p=bitsWrite(bits,p,Math.min(player.maxHp,1023),10);p=bitsWrite(bits,p,Math.min(player.mp,127),7);
+  p=bitsWrite(bits,p,Math.min(player.maxMp,127),7);p=bitsWrite(bits,p,Math.min(player.atk,127),7);
+  p=bitsWrite(bits,p,Math.min(player.def,127),7);p=bitsWrite(bits,p,Math.min(player.exp,16383),14);
+  p=bitsWrite(bits,p,Math.min(player.expNext,16383),14);p=bitsWrite(bits,p,Math.min(player.gold,16383),14);
+  p=bitsWrite(bits,p,Math.min(yaku,127),7);p=bitsWrite(bits,p,Math.min(player.x,31),5);
+  p=bitsWrite(bits,p,Math.min(player.y,15),4);
+  let chk=0;for(let i=0;i<113;i++)chk=(chk+bits[i])%128;bitsWrite(bits,p,chk,7);
+  let result='';for(let i=0;i<20;i++){let idx=0;for(let b=0;b<6;b++)idx=(idx<<1)|bits[i*6+b];result+=SPELL_CHARS[idx];}
+  return result;
+}
+function decodePassword(str){
+  if(str.length!==20)return{ok:false,msg:'呪文は　２０文字　ひつようです'};
+  const bits=[];
+  for(const ch of str){const idx=SPELL_CHARS.indexOf(ch);if(idx<0)return{ok:false,msg:`「${ch}」は　ただしくない文字です`};for(let b=5;b>=0;b--)bits.push((idx>>b)&1);}
+  let p=0,v;
+  [v,p]=bitsRead(bits,p,7);const level=v;[v,p]=bitsRead(bits,p,10);const hp=v;[v,p]=bitsRead(bits,p,10);const maxHp=v;
+  [v,p]=bitsRead(bits,p,7);const mp=v;[v,p]=bitsRead(bits,p,7);const maxMp=v;[v,p]=bitsRead(bits,p,7);const atk=v;
+  [v,p]=bitsRead(bits,p,7);const def=v;[v,p]=bitsRead(bits,p,14);const exp=v;[v,p]=bitsRead(bits,p,14);const expNext=v;
+  [v,p]=bitsRead(bits,p,14);const gold=v;[v,p]=bitsRead(bits,p,7);const yaku=v;[v,p]=bitsRead(bits,p,5);const px=v;
+  [v,p]=bitsRead(bits,p,4);const py=v;[v,  ]=bitsRead(bits,p,7);const chkGot=v;
+  let chkCalc=0;for(let i=0;i<113;i++)chkCalc=(chkCalc+bits[i])%128;
+  if(chkCalc!==chkGot)return{ok:false,msg:'呪文が　まちがっています！'};
+  return{ok:true,level,hp:Math.min(hp,maxHp),maxHp,mp:Math.min(mp,maxMp),maxMp,atk,def,exp,expNext,gold,yaku,px:Math.min(px,MW-1),py:Math.min(py,MH-1)};
+}
+function applyPassword(d){
+  player.level=d.level;player.hp=d.hp;player.maxHp=d.maxHp;player.mp=d.mp;player.maxMp=d.maxMp;
+  player.atk=d.atk;player.def=d.def;player.exp=d.exp;player.expNext=d.expNext;player.gold=d.gold;
+  player.x=d.px;player.y=d.py;
+  const y=player.items.find(i=>i.name==='やくそう');
+  if(y)y.count=d.yaku;else if(d.yaku>0)player.items.push({name:'やくそう',count:d.yaku});
+}
+
+// 呪文画面は async で wrap（入力完了まで待つ）
+const KB_COLS=8,KB_ROWS=8;
+let pwState=null; // null or {mode,arr,pos,kbRow,kbCol,msg,result}
+
+async function runPassword(mode){
+  gState='password';
+  pwState={mode,arr:new Array(20).fill(''),pos:0,kbRow:0,kbCol:0,msg:'',result:null};
+
+  if(mode==='show'){
+    await waitConfirm();
+    pwState=null; return;
+  }
+
+  // 入力モード
+  while(true){
+    const input = await waitKey();
+
+    if(input==='Escape'||input==='Backspace'){ pwState=null; return; }
+
+    if(input==='ArrowUp'){pwState.kbRow=(pwState.kbRow-1+KB_ROWS)%KB_ROWS;snd('cursor');}
+    else if(input==='ArrowDown'){pwState.kbRow=(pwState.kbRow+1)%KB_ROWS;snd('cursor');}
+    else if(input==='ArrowLeft'){pwState.kbCol=(pwState.kbCol-1+KB_COLS)%KB_COLS;snd('cursor');}
+    else if(input==='ArrowRight'){pwState.kbCol=(pwState.kbCol+1)%KB_COLS;snd('cursor');}
+    else if(input==='z'||input==='Z'){
+      if(pwState.pos<20){const idx=pwState.kbRow*KB_COLS+pwState.kbCol;if(idx<64){pwState.arr[pwState.pos]=SPELL_CHARS[idx];pwState.pos++;snd('confirm');}}
+    }
+    else if(input==='x'||input==='X'){
+      if(pwState.pos>0){pwState.pos--;pwState.arr[pwState.pos]='';snd('cancel');}
+      else{pwState=null;return;}
+    }
+    else if(input==='Enter'){
+      if(pwState.pos===20){
+        const res=decodePassword(pwState.arr.join(''));
+        if(res.ok){applyPassword(res);pwState.msg='ぼうけんを　さいかい！';pwState.result=true;snd('levelup');await sleep(1500);pwState=null;return;}
+        else{pwState.msg=res.msg;pwState.result=false;snd('cancel');}
+      } else{pwState.msg=`あと${20-pwState.pos}文字　たりません`;pwState.result=false;snd('cancel');}
+    }
+    else if(input?.type==='click'){
+      const{x,y}=input;
+      // もどるボタン
+      if(x>=36&&x<=126&&y>=414&&y<=450){pwState=null;return;}
+      // キーボードグリッド
+      const KBX=30,KBY=130,KW=74,KH=34;
+      if(x>=KBX&&x<=KBX+KW*KB_COLS&&y>=KBY+8&&y<=KBY+KB_ROWS*KH+8){
+        const c=Math.floor((x-KBX)/KW),r=Math.floor((y-KBY-8)/KH);
+        if(r>=0&&r<KB_ROWS&&c>=0&&c<KB_COLS&&pwState.pos<20){
+          const idx=r*KB_COLS+c;if(idx<64){pwState.arr[pwState.pos]=SPELL_CHARS[idx];pwState.pos++;snd('confirm');}
+        }
+      }
+      // スロットクリックで削除
+      for(let i=0;i<20;i++){if(x>=42+i*29&&x<=42+i*29+26&&y>=82&&y<=112&&i<pwState.pos){while(pwState.pos>i){pwState.pos--;pwState.arr[pwState.pos]='';}snd('cancel');break;}}
+      // 決定
+      if(y>=408&&y<=448&&x>130) { /* Enter 相当 - 上のEnterブランチを再実行のため再注入は省略、Enterキーで操作してもらう */ }
+    }
+  }
+}
+
+// =====================================================================
+// ===== DRAW FUNCTIONS (ui state を読んで描く) ========================
+// =====================================================================
+
 function drawTitle(){
-  titleT++;
-  const gr=ctx.createLinearGradient(0,0,0,480);
-  gr.addColorStop(0,'#000022');gr.addColorStop(1,'#000011');
+  animT++;
+  const gr=ctx.createLinearGradient(0,0,0,480);gr.addColorStop(0,'#000022');gr.addColorStop(1,'#000011');
   ctx.fillStyle=gr;ctx.fillRect(0,0,640,480);
   ctx.fillStyle='#ffffff';
-  for(let i=0;i<60;i++){
-    const sx=(i*137+40)%640,sy=(i*79+20)%480,sz=(i%4===0)?2:1;
-    const br=0.3+0.7*(Math.sin(titleT*0.05+i*0.8)*0.5+0.5);
-    ctx.globalAlpha=br;ctx.beginPath();ctx.arc(sx,sy,sz,0,Math.PI*2);ctx.fill();
-  }
+  for(let i=0;i<60;i++){const sx=(i*137+40)%640,sy=(i*79+20)%480,sz=(i%4===0)?2:1,br=0.3+0.7*(Math.sin(animT*0.05+i*0.8)*0.5+0.5);ctx.globalAlpha=br;ctx.beginPath();ctx.arc(sx,sy,sz,0,Math.PI*2);ctx.fill();}
   ctx.globalAlpha=1;
-  // Title glow
   ctx.shadowColor='#ffcc00';ctx.shadowBlur=30;
   ctx.fillStyle='#ffdd00';ctx.font='bold 52px "Courier New",monospace';ctx.textAlign='center';
-  ctx.fillText('勇者の冒険',320,140);
-  ctx.shadowBlur=0;
-  ctx.fillStyle='#ff8844';ctx.font='bold 20px "Courier New",monospace';
-  ctx.fillText('～ドラクエ風RPG～',320,184);
-  ctx.strokeStyle='#ffcc00';ctx.lineWidth=2;
-  ctx.beginPath();ctx.moveTo(80,205);ctx.lineTo(560,205);ctx.stroke();
-  drawHero(296,225,Math.floor(titleT/15)%2);
-  if(Math.floor(titleT/35)%2===0){
-    ctx.fillStyle='#ffffff';ctx.font='bold 22px "Courier New",monospace';
-    ctx.fillText('Ｚキーで　スタート',320,320);
-  }
-  ctx.fillStyle='#8888aa';ctx.font='14px "Courier New",monospace';
-  ctx.fillText('町に立ち寄り、ダンジョンの魔王を倒せ！',320,390);
-  ctx.fillStyle='#665566';ctx.font='13px "Courier New",monospace';
-  ctx.fillText('矢印キー：移動　Ｚ：決定　Ｘ：キャンセル',320,415);
+  ctx.fillText('勇者の冒険',320,140);ctx.shadowBlur=0;
+  ctx.fillStyle='#ff8844';ctx.font='bold 20px "Courier New",monospace';ctx.fillText('～ドラクエ風RPG　async版～',320,184);
+  drawHero(296,225,Math.floor(animT/15)%2);
+  if(Math.floor(animT/35)%2===0){ctx.fillStyle='#ffffff';ctx.font='bold 22px "Courier New",monospace';ctx.fillText('Ｚキーで　スタート',320,320);}
+  ctx.fillStyle='#8888aa';ctx.font='13px "Courier New",monospace';ctx.fillText('町に立ち寄り、ダンジョンの魔王を倒せ！',320,390);
   ctx.textAlign='left';
 }
 
-// ===== OVERWORLD =====
-let moveDelay=0,animT=0;
 function drawOverworld(){
   animT++;
-  for(let ty=0;ty<MH;ty++)
-    for(let tx=0;tx<MW;tx++)
-      drawTile(MAP[ty][tx],tx*TW,ty*TH);
-  // Dungeon marker glow
+  for(let ty=0;ty<MH;ty++) for(let tx=0;tx<MW;tx++) drawTile(MAP[ty][tx],tx*TW,ty*TH);
   const pulse=Math.sin(animT*0.08)*0.5+0.5;
-  ctx.globalAlpha=0.3*pulse;ctx.fillStyle='#ff00ff';
-  ctx.fillRect(9*TW,7*TH,TW,TH);ctx.globalAlpha=1;
-  // Player
-  if(player.flashTimer>0){player.flashTimer--;ctx.globalAlpha=0.4+Math.sin(animT*0.5)*0.3;}
-  drawHero(player.x*TW,player.y*TH,player.walkFrame);
-  ctx.globalAlpha=1;
-  // Status HUD
+  ctx.globalAlpha=0.3*pulse;ctx.fillStyle='#ff00ff';ctx.fillRect(9*TW,7*TH,TW,TH);ctx.globalAlpha=1;
+  if(ui.playerFlash>0){ui.playerFlash--;ctx.globalAlpha=0.4+Math.sin(animT*0.5)*0.3;}
+  drawHero(player.x*TW,player.y*TH,player.walkFrame);ctx.globalAlpha=1;
+  // HUD
   win(464,0,176,108);
-  txt(player.name,476,22,14,'#ffff88');
-  txt(`Lv.${player.level}`,572,22,14,'#88ffff');
-  hpBar('HP',468,28,168,player.hp,player.maxHp);
-  hpBar('MP',468,48,168,player.mp,player.maxMp);
-  txt(`G  ${player.gold}`,476,82,14,'#ffcc44');
-  txt(`EXP ${player.exp}`,550,82,12,'#aaffaa');
-  // Mini hint
-  if(MAP[player.y][player.x]===T){
-    win(160,430,320,46);txt('【町】Ｚキーで　はいる',180,460,15,'#ffff88');
+  txt(player.name,476,22,14,'#ffff88');txt(`Lv.${player.level}`,572,22,14,'#88ffff');
+  hpBar('HP',468,28,168,player.hp,player.maxHp);hpBar('MP',468,48,168,player.mp,player.maxMp);
+  txt(`G  ${player.gold}`,476,82,14,'#ffcc44');txt(`EXP ${player.exp}`,550,82,12,'#aaffaa');
+  if(MAP[player.y][player.x]===T){win(160,430,320,46);txt('【町】Ｚキーで　はいる',180,460,15,'#ffff88');}
+  if(MAP[player.y][player.x]===D){win(100,430,440,46);ctx.fillStyle='rgba(80,0,0,0.7)';ctx.fillRect(102,432,436,42);txt('【ダンジョン】Ｚキーで　まおうに　いどむ！',118,460,14,'#ff6666');}
+  // フィールドメニュー
+  if(fieldMenu&&ui.menu){drawMenu();}
+  // Dパッド
+  drawDpad();
+}
+
+function drawBattleBG(){
+  const gr=ctx.createLinearGradient(0,0,0,295);gr.addColorStop(0,'#000022');gr.addColorStop(0.6,'#110033');gr.addColorStop(1,'#220011');
+  ctx.fillStyle=gr;ctx.fillRect(0,0,640,295);
+  ctx.fillStyle='rgba(255,255,255,0.8)';
+  for(let i=0;i<20;i++){const sx=(i*137+30)%640,sy=(i*91+15)%200;ctx.beginPath();ctx.arc(sx,sy,1,0,Math.PI*2);ctx.fill();}
+  const gg=ctx.createLinearGradient(0,265,0,295);gg.addColorStop(0,'#220011');gg.addColorStop(1,'#110008');
+  ctx.fillStyle=gg;ctx.fillRect(0,265,640,30);
+}
+
+function drawBattle(){
+  animT++;
+  drawBattleBG();
+  const enemy=ui.battleEnemy;
+  if(enemy){
+    if(enemy.flashTimer>0)enemy.flashTimer--;
+    drawEnemy(enemy,animT);
+    win(10,8,310,58);txt(enemy.name,26,30,16,'#ff9999');hpBar('HP',16,36,295,enemy.hp,enemy.maxHp);
   }
-  if(MAP[player.y][player.x]===D){
-    win(100,430,440,46);ctx.fillStyle='rgba(80,0,0,0.7)';ctx.fillRect(102,432,436,42);
-    txt('【ダンジョン】Ｚキーで　まおうに　いどむ！',118,460,14,'#ff6666');
+  if(ui.playerFlash>0){ctx.fillStyle='rgba(255,60,60,0.35)';ctx.fillRect(0,0,640,295);}
+  win(0,295,640,185);
+  // プレイヤーステータス
+  win(8,303,204,170);
+  txt(player.name,22,325,15,'#ffff88');txt(`Lv.${player.level}`,148,325,14,'#88ffff');
+  hpBar('HP',14,332,194,player.hp,player.maxHp);hpBar('MP',14,353,194,player.mp,player.maxMp);
+  txt(`EXP: ${player.exp}`,14,392,12,'#88ff88');txt(`G:   ${player.gold}`,14,410,12,'#ffcc44');
+  const yaku=player.items.find(i=>i.name==='やくそう');txt(`やくそう: x${yaku?yaku.count:0}`,14,428,12,'#ffaaaa');
+  // メッセージウィンドウ
+  win(220,303,280,110);
+  ui.msgLines.forEach((l,i)=>txt(l,236,330+i*24,15,'#ffffff'));
+  if(ui.msgDone&&Math.floor(animT/22)%2===0) txt('▼',472,400,14,'#ffffff');
+  // コマンドメニュー
+  if(ui.menu) drawMenu();
+}
+
+// 汎用メニュー描画（ui.menu を読む）
+function drawMenu(){
+  const{items,cursor,title,mx=510,my=315,ih=38}=ui.menu;
+  win(mx,303,125,170);
+  if(title) txt(title,mx+8,324,13,'#ffaaff');
+  items.forEach((item,i)=>{
+    const isSel=i===cursor;
+    const isHov=mouseX>=mx&&mouseX<=mx+125&&mouseY>=my+i*ih&&mouseY<my+(i+1)*ih;
+    if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(mx+1,my+i*ih,123,ih-4);}
+    else if(isHov){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(mx+1,my+i*ih,123,ih-4);}
+    const col=isSel?'#ffff00':isHov?'#aaddff':'#ffffff';
+    txt((isSel?'▶':' ')+item,mx+8,my+i*ih+ih*0.72,14,col);
+  });
+}
+
+function drawTown(){
+  animT++;
+  const sky=ctx.createLinearGradient(0,0,0,480);sky.addColorStop(0,'#334466');sky.addColorStop(1,'#556688');
+  ctx.fillStyle=sky;ctx.fillRect(0,0,640,480);ctx.fillStyle='#447744';ctx.fillRect(0,340,640,140);
+  ctx.fillStyle='#aabb88';for(let i=0;i<8;i++)ctx.fillRect(70+i*68,340,64,15);
+  ctx.fillStyle='#997755';ctx.fillRect(60,160,180,200);ctx.fillStyle='#aa2200';ctx.beginPath();ctx.moveTo(40,162);ctx.lineTo(150,70);ctx.lineTo(260,162);ctx.fill();
+  ctx.fillStyle='#7799cc';ctx.fillRect(105,245,60,55);ctx.fillStyle='#88aadd';ctx.fillRect(75,195,50,50);ctx.fillRect(170,195,50,50);
+  ctx.fillStyle='#ffddaa';ctx.font='bold 18px "Courier New"';ctx.textAlign='center';ctx.fillText('やどや',150,190);
+  ctx.fillStyle='#887755';ctx.fillRect(400,160,180,200);ctx.fillStyle='#117733';ctx.beginPath();ctx.moveTo(380,162);ctx.lineTo(490,70);ctx.lineTo(600,162);ctx.fill();
+  ctx.fillStyle='#7799cc';ctx.fillRect(445,245,60,55);ctx.fillStyle='#88aadd';ctx.fillRect(415,195,50,50);ctx.fillRect(510,195,50,50);
+  ctx.fillStyle='#ffddaa';ctx.font='bold 18px "Courier New"';ctx.fillText('どうぐや',490,190);
+  ctx.textAlign='left';
+  win(160,0,320,44);txt('ようこそ！　まちへ',230,28,16,'#ffff88');
+  // メッセージ or メニュー
+  if(ui.msgLines.length){
+    win(100,360,440,100);
+    ui.msgLines.forEach((l,i)=>txt(l,120,390+i*26,15,'#ffffff'));
+    if(ui.msgDone&&Math.floor(animT/25)%2===0)txt('▼',510,448,13,'#aaaaaa');
+  } else if(ui.menu){
+    win(140,320,360,170);
+    txt('なにを　しますか？',160,348,15,'#ffff88');
+    const{items,cursor,mx=158,my=372,ih=32}=ui.menu;
+    items.forEach((item,i)=>{
+      const isSel=i===cursor;
+      const isHov=mouseX>=mx&&mouseX<=mx+360&&mouseY>=my+i*ih&&mouseY<my+(i+1)*ih;
+      if(isSel){ctx.fillStyle='rgba(80,80,0,0.5)';ctx.fillRect(mx,my+i*ih-14,356,ih);}
+      else if(isHov){ctx.fillStyle='rgba(40,40,80,0.6)';ctx.fillRect(mx,my+i*ih-14,356,ih);}
+      const col=isSel?'#ffff00':isHov?'#aaddff':'#ffffff';
+      txt((isSel?'▶ ':' ')+item,mx,my+i*ih,14,col);
+    });
   }
 }
 
-function handleOverworld(){
+function drawPassword(){
+  const p=pwState;
+  const gr=ctx.createLinearGradient(0,0,0,480);gr.addColorStop(0,'#000814');gr.addColorStop(1,'#001122');
+  ctx.fillStyle=gr;ctx.fillRect(0,0,640,480);
+  ctx.textAlign='center';ctx.shadowColor='#00aaff';ctx.shadowBlur=15;
+  ctx.fillStyle='#00ccff';ctx.font='bold 22px "Courier New",monospace';ctx.fillText('ふっかつの　じゅもん',320,32);ctx.shadowBlur=0;
+  if(p.mode==='show'){
+    const pw=encodePassword();win(80,50,480,110);
+    ctx.fillStyle='#aaddff';ctx.font='13px "Courier New",monospace';ctx.fillText('このじゅもんを　メモしてください',320,75);
+    ctx.fillStyle='#ffff44';ctx.font='bold 28px "Courier New",monospace';ctx.fillText(pw.slice(0,10),320,110);ctx.fillText(pw.slice(10,20),320,148);
+    win(80,175,480,130);ctx.fillStyle='#88ccff';ctx.font='13px "Courier New",monospace';
+    ctx.fillText(`Lv.${player.level}　HP:${player.hp}/${player.maxHp}　MP:${player.mp}/${player.maxMp}`,320,205);
+    ctx.fillText(`ATK:${player.atk}　DEF:${player.def}　EXP:${player.exp}`,320,230);
+    ctx.fillText(`GOLD:${player.gold}G　やくそう:${(player.items.find(i=>i.name==='やくそう')||{count:0}).count}こ`,320,255);
+    ctx.fillStyle='#888';ctx.font='13px monospace';ctx.fillText('Ｚキーで　もどる',320,450);
+  } else {
+    win(30,48,580,70);ctx.fillStyle='#aaddff';ctx.font='13px "Courier New",monospace';ctx.fillText('じゅもんを　にゅうりょくして　ください',320,68);
+    for(let i=0;i<20;i++){const sx=42+i*29,sy=82,sw=26,sh=30,isCur=(i===p.pos);ctx.fillStyle=isCur?'#003366':'#001133';ctx.fillRect(sx,sy,sw,sh);ctx.strokeStyle=isCur?'#00ffff':'#004488';ctx.lineWidth=isCur?2:1;ctx.strokeRect(sx,sy,sw,sh);if(p.arr[i]){ctx.fillStyle=isCur?'#ffff00':'#ffffff';ctx.font='bold 16px "Courier New",monospace';ctx.fillText(p.arr[i],sx+13,sy+22);}if(isCur&&Math.floor(Date.now()/400)%2===0){ctx.fillStyle='#00ffff';ctx.fillRect(sx+2,sy+27,22,2);}if(i===9){ctx.fillStyle='#004488';ctx.fillRect(sx+sw+1,sy+5,2,20);}}
+    const KBX=30,KBY=130,KW=74,KH=34;win(28,128,584,KB_ROWS*KH+16);
+    for(let r=0;r<KB_ROWS;r++)for(let c=0;c<KB_COLS;c++){const idx=r*KB_COLS+c;if(idx>=64)break;const kx=KBX+c*KW+2,ky=KBY+r*KH+8,isCur=(r===p.kbRow&&c===p.kbCol);ctx.fillStyle=isCur?'#002255':'#001133';ctx.fillRect(kx,ky,KW-4,KH-4);ctx.strokeStyle=isCur?'#00ffff':'#003366';ctx.lineWidth=1;ctx.strokeRect(kx,ky,KW-4,KH-4);ctx.fillStyle=isCur?'#ffff00':'#ccddff';ctx.font=`${isCur?'bold ':''}17px "Courier New",monospace`;ctx.fillText(SPELL_CHARS[idx],kx+(KW-4)/2,ky+(KH-4)*0.68);}
+    win(30,408,580,56);ctx.fillStyle='rgba(120,40,40,0.8)';ctx.fillRect(36,414,90,36);ctx.strokeStyle='#ff8888';ctx.lineWidth=1;ctx.strokeRect(36,414,90,36);ctx.fillStyle='#ffaaaa';ctx.font='bold 14px "Courier New",monospace';ctx.fillText('もどる',81,437);
+    ctx.fillStyle='#7799bb';ctx.font='12px "Courier New",monospace';ctx.fillText('矢印：カーソル　Ｚ：入力　Ｘ：１文字消す　Enter：けってい',340,437);
+    if(p.msg){win(80,355,480,48);ctx.fillStyle=p.result?'#88ff88':'#ff6666';ctx.font='14px "Courier New",monospace';ctx.fillText(p.msg,320,382);}
+  }
+  ctx.textAlign='left';
+}
+
+function drawEnding(){
+  animT++;
+  const gr=ctx.createLinearGradient(0,0,0,480);gr.addColorStop(0,'#000033');gr.addColorStop(1,'#110022');
+  ctx.fillStyle=gr;ctx.fillRect(0,0,640,480);
+  ctx.fillStyle='rgba(255,255,255,0.9)';
+  for(let i=0;i<80;i++){const br=Math.sin(animT*0.04+i*0.5)*0.5+0.5;ctx.globalAlpha=br*0.8;ctx.beginPath();ctx.arc((i*137+20)%640,(i*79+10)%480,1,0,Math.PI*2);ctx.fill();}
+  ctx.globalAlpha=1;ctx.textAlign='center';
+  ctx.shadowColor='#ffdd00';ctx.shadowBlur=25;ctx.fillStyle='#ffdd00';ctx.font='bold 46px "Courier New",monospace';ctx.fillText('おめでとう！',320,140);ctx.shadowBlur=0;
+  ctx.fillStyle='#ffffff';ctx.font='20px "Courier New",monospace';ctx.fillText('魔王ゾーマを　たおした！',320,200);ctx.fillText('世界に　へいわが　もどった！',320,235);
+  win(160,270,320,160);ctx.fillStyle='#ffcc88';ctx.font='16px "Courier New",monospace';
+  ctx.fillText(`レベル：${player.level}`,320,305);ctx.fillText(`ゴールド：${player.gold} G`,320,332);ctx.fillText(`経験値：${player.exp} EXP`,320,359);ctx.fillText(`HP：${player.hp} / ${player.maxHp}`,320,386);
+  if(Math.floor(animT/30)%2===0){ctx.fillStyle='#aaaaaa';ctx.font='14px "Courier New",monospace';ctx.fillText('Ｚキーで　タイトルへ',320,455);}
+  ctx.textAlign='left';
+}
+
+// Dパッド描画
+function drawDpad(){
+  const labels=['↑','→','↓','←'];
+  labels.forEach((l,i)=>{const b=dpadBtn(i);ctx.fillStyle='rgba(0,0,0,0.5)';ctx.fillRect(b.x,b.y,b.w,b.h);ctx.strokeStyle='rgba(255,255,255,0.4)';ctx.lineWidth=1;ctx.strokeRect(b.x,b.y,b.w,b.h);ctx.fillStyle='rgba(255,255,255,0.7)';ctx.font='bold 22px monospace';ctx.textAlign='center';ctx.fillText(l,b.x+b.w/2,b.y+b.h/2+8);});
+  const zb=dpadBtn(4);ctx.fillStyle='rgba(0,80,160,0.6)';ctx.fillRect(zb.x,zb.y,zb.w,zb.h);ctx.strokeStyle='rgba(100,180,255,0.6)';ctx.lineWidth=1;ctx.strokeRect(zb.x,zb.y,zb.w,zb.h);ctx.fillStyle='rgba(180,220,255,0.9)';ctx.font='bold 13px monospace';ctx.textAlign='center';ctx.fillText('決定',zb.x+zb.w/2,zb.y+zb.h/2+5);
+  const mb=dpadBtn(5);ctx.fillStyle='rgba(60,40,0,0.6)';ctx.fillRect(mb.x,mb.y,mb.w,mb.h);ctx.strokeStyle='rgba(200,160,80,0.5)';ctx.lineWidth=1;ctx.strokeRect(mb.x,mb.y,mb.w,mb.h);ctx.fillStyle='rgba(220,180,80,0.9)';ctx.font='bold 11px monospace';ctx.textAlign='center';ctx.fillText('メニュー',mb.x+mb.w/2,mb.y+mb.h/2+4);
+  ctx.textAlign='left';
+}
+
+// =====================================================================
+// ===== OVERWORLD MOVEMENT (ゲームループから呼ばれる) =================
+// =====================================================================
+let moveDelay=0;
+const FIELD_MENU_OPTS=['ふっかつの　じゅもんを　みる','じゅもんを　にゅうりょくする','とじる'];
+
+function processOverworld(){
+  if(gState!=='overworld') return;
+  if(_owResolve===null) return; // async 側が待ってない
+
+  // Dパッド連続移動
+  dpadMoveTimer++;
+  if(dpadMoveTimer>=12){dpadMoveTimer=0;['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'].forEach(d=>{if(dpadHeld[d])keyJust[d]=true;});}
+
+  // メニュー開く
+  if(keyJust['Enter']){ fireOverworldEvent({type:'menu'}); return; }
+
+  // 移動
   if(moveDelay>0){moveDelay--;return;}
   let dx=0,dy=0;
   if(keys['ArrowUp']   ||keyJust['ArrowUp'])   {dy=-1;player.dir=0;}
@@ -640,718 +881,62 @@ function handleOverworld(){
   else if(keys['ArrowDown'] ||keyJust['ArrowDown']) {dy=1; player.dir=2;}
   else if(keys['ArrowLeft'] ||keyJust['ArrowLeft']) {dx=-1;player.dir=3;}
 
-  if(dx!==0||dy!==0){
-    const nx=player.x+dx,ny=player.y+dy;
+  if(dx||dy){
+    const nx=player.x+dx, ny=player.y+dy;
     if(nx>=0&&nx<MW&&ny>=0&&ny<MH&&WALKABLE.includes(MAP[ny][nx])){
-      player.x=nx;player.y=ny;
-      player.walkFrame^=1;
-      moveDelay=10;snd('step');
+      player.x=nx; player.y=ny; player.walkFrame^=1; moveDelay=10; snd('step');
       const tile=MAP[ny][nx];
-      if(tile===T||tile===D) return; // handled by Z press
-      // Random encounter
+      if(tile===T||tile===D) return;
       const chance=tile===F?0.2:0.1;
-      if(Math.random()<chance) startEncounter();
+      if(Math.random()<chance){
+        let pool;
+        if(player.level<=2)pool=[EDEFS[0]];
+        else if(player.level<=4)pool=[EDEFS[0],EDEFS[1],EDEFS[3]];
+        else if(player.level<=6)pool=[EDEFS[1],EDEFS[2],EDEFS[3]];
+        else pool=[EDEFS[2],EDEFS[3]];
+        fireOverworldEvent({type:'encounter',enemy:{...pool[pool.length*Math.random()|0]}});
+        return;
+      }
     }
   }
 
-  const tile=MAP[player.y][player.x];
+  // Zキーでタイル操作
   if(keyJust['z']||keyJust['Z']){
-    if(tile===T){ gState='town'; townCursor=0; townPhase='menu'; snd('confirm'); }
-    else if(tile===D){ startBattle({...BOSS,hp:BOSS.hp}); }
+    const tile=MAP[player.y][player.x];
+    if(tile===T){ fireOverworldEvent({type:'enterTown'}); return; }
+    if(tile===D){ fireOverworldEvent({type:'enterDungeon'}); return; }
   }
 }
 
-// ===== TOWN =====
-let townCursor=0, townPhase='menu', townMsg='', townMsgT=0;
-const TOWN_OPTS=['やどやで　やすむ（10G）','やくそうを　かう（20G）','まちを　でる'];
-
-function drawTown(){
-  // BG sky/ground
-  const sky=ctx.createLinearGradient(0,0,0,480);
-  sky.addColorStop(0,'#334466');sky.addColorStop(1,'#556688');
-  ctx.fillStyle=sky;ctx.fillRect(0,0,640,480);
-  ctx.fillStyle='#447744';ctx.fillRect(0,340,640,140);
-  // Cobbles
-  ctx.fillStyle='#aabb88';
-  for(let i=0;i<8;i++) ctx.fillRect(70+i*68,340,64,15);
-
-  // Inn
-  ctx.fillStyle='#997755';ctx.fillRect(60,160,180,200);
-  ctx.fillStyle='#aa2200';
-  ctx.beginPath();ctx.moveTo(40,162);ctx.lineTo(150,70);ctx.lineTo(260,162);ctx.fill();
-  ctx.fillStyle='#7799cc';ctx.fillRect(105,245,60,55);
-  ctx.fillStyle='#88aadd';ctx.fillRect(75,195,50,50);ctx.fillRect(170,195,50,50);
-  ctx.fillStyle='#ffddaa';ctx.font='bold 18px "Courier New"';ctx.textAlign='center';
-  ctx.fillText('やどや',150,190);
-  // Sign
-  ctx.fillStyle='#886644';ctx.fillRect(130,135,40,25);
-  ctx.fillStyle='#ffcc44';ctx.font='12px monospace';ctx.fillText('INN',140,152);
-
-  // Shop
-  ctx.fillStyle='#887755';ctx.fillRect(400,160,180,200);
-  ctx.fillStyle='#117733';
-  ctx.beginPath();ctx.moveTo(380,162);ctx.lineTo(490,70);ctx.lineTo(600,162);ctx.fill();
-  ctx.fillStyle='#7799cc';ctx.fillRect(445,245,60,55);
-  ctx.fillStyle='#88aadd';ctx.fillRect(415,195,50,50);ctx.fillRect(510,195,50,50);
-  ctx.fillStyle='#ffddaa';ctx.font='bold 18px "Courier New"';
-  ctx.fillText('どうぐや',490,190);
-  ctx.fillStyle='#886644';ctx.fillRect(460,135,50,25);
-  ctx.fillStyle='#ffcc44';ctx.font='12px monospace';ctx.fillText('SHOP',465,152);
-
-  // NPCs
-  ctx.fillStyle='#ffcc88';ctx.beginPath();ctx.arc(320,330,10,0,Math.PI*2);ctx.fill();
-  ctx.fillStyle='#3366cc';ctx.fillRect(313,340,14,18);
-  ctx.fillStyle='#ffcc88';ctx.font='12px monospace';ctx.textAlign='center';
-  ctx.fillText('？',320,328);
-
-  ctx.textAlign='left';
-  win(160,0,320,44);txt('ようこそ！　まちへ',230,28,16,'#ffff88');
-
-  if(townPhase==='menu'){
-    win(140,320,360,155);
-    txt('なにを　しますか？',160,348,15,'#ffff88');
-    TOWN_OPTS.forEach((o,i)=>{
-      const col=i===townCursor?'#ffff00':'#ffffff';
-      txt((i===townCursor?'▶ ':' ')+o,158,380+i*32,14,col);
-    });
-  }else{
-    win(100,380,440,90);
-    wrapText(townMsg,22).forEach((l,i)=>txt(l,120,410+i*24,14,'#ffffff'));
-    townMsgT++;
-    if(townMsgT>70&&Math.floor(townMsgT/25)%2===0)
-      txt('Ｚキーで　続ける',310,458,12,'#aaaaaa');
-  }
-}
-
-function handleTown(){
-  if(townPhase==='menu'){
-    if(keyJust['ArrowUp']){townCursor=(townCursor-1+3)%3;snd('cursor');}
-    if(keyJust['ArrowDown']){townCursor=(townCursor+1)%3;snd('cursor');}
-    if(keyJust['z']||keyJust['Z']){
-      snd('confirm');
-      if(townCursor===0){
-        if(player.gold>=10){player.gold-=10;player.hp=player.maxHp;player.mp=player.maxMp;townMsg='ぐっすり　ねむれた！\nHP・MPが　かいふくした！';snd('heal');}
-        else townMsg='Gが　たりません...';
-        townPhase='msg';townMsgT=0;
-      }else if(townCursor===1){
-        if(player.gold>=20){player.gold-=20;const y=player.items.find(i=>i.name==='やくそう');if(y)y.count++;else player.items.push({name:'やくそう',count:1});townMsg='やくそうを　１こ\nかいました！';}
-        else townMsg='Gが　たりません...';
-        townPhase='msg';townMsgT=0;
-      }else{gState='overworld';snd('cancel');}
-    }
-    if(keyJust['x']||keyJust['X']){gState='overworld';snd('cancel');}
-  }else{
-    townMsgT++;
-    if(townMsgT>70&&(keyJust['z']||keyJust['Z'])){townPhase='menu';snd('confirm');}
-  }
-}
-
-// ===== BATTLE =====
-let bEnemy=null,bPhase='',bCursor=0,bSubCursor=0;
-let bMsg='',bMsgTgt='',bMsgDone=false,bMsgT=0,bMsgCb=null;
-let bAnimT=0,bResultT=0,bExpGain=0,bGoldGain=0,bLevelUp=false;
-const BCMDS=['たたかう','まほう','どうぐ','にげる'];
-
-function setMsg(text,cb){
-  bMsgTgt=text;bMsgT=0;bMsg='';bMsgDone=false;bMsgCb=cb||null;
-}
-function updateMsg(){
-  if(!bMsgTgt){bMsgDone=true;return;}
-  if(bMsg.length<bMsgTgt.length){
-    bMsgT++;if(bMsgT>=2){bMsgT=0;bMsg+=bMsgTgt[bMsg.length];}
-  }else bMsgDone=true;
-}
-
-function startEncounter(){
-  let pool;
-  if(player.level<=2) pool=[EDEFS[0]];
-  else if(player.level<=4) pool=[EDEFS[0],EDEFS[1],EDEFS[3]];
-  else if(player.level<=6) pool=[EDEFS[1],EDEFS[2],EDEFS[3]];
-  else pool=[EDEFS[2],EDEFS[3]];
-  startBattle({...pool[pool.length*Math.random()|0]});
-}
-
-function startBattle(eDef){
-  gState='battle';
-  bEnemy={...eDef,flashTimer:0};
-  bPhase='selecting';bCursor=0;bSubCursor=0;
-  bAnimT=0;bResultT=0;bExpGain=0;bGoldGain=0;bLevelUp=false;
-  player.flashTimer=0;
-  setMsg(`${bEnemy.name}が\nあらわれた！`);
-  snd('encounter');
-}
-
-function dmg(atk,def){return Math.max(1,Math.floor((atk-def)*(0.8+Math.random()*0.4)));}
-
-function afterPlayer(){
-  if(bEnemy.hp<=0){
-    bExpGain=bEnemy.exp; bGoldGain=bEnemy.gold;
-    player.exp+=bExpGain; player.gold+=bGoldGain;
-    while(player.exp>=player.expNext){
-      player.level++;
-      player.maxHp+=8+Math.random()*5|0;
-      player.maxMp+=2;player.hp=player.maxHp;player.mp=player.maxMp;
-      player.atk+=3+Math.random()*2|0;
-      player.def+=1+Math.random()*2|0;
-      player.expNext=Math.floor(player.expNext*1.75);
-      bLevelUp=true;snd('levelup');
-    }
-    bPhase='won';bResultT=0;return;
-  }
-  enemyTurn();
-}
-
-function enemyTurn(){
-  bPhase='enemy_turn';
-  let d,msg;
-  if(bEnemy.isBoss&&Math.random()<0.3){
-    d=15+Math.random()*18|0;
-    msg=`${bEnemy.name}は\nまじゅつを　となえた！\nゆうしゃに　${d}の\nダメージ！`;
-  }else{
-    d=dmg(bEnemy.atk,player.def);
-    msg=`${bEnemy.name}の\nこうげき！\nゆうしゃに　${d}の\nダメージ！`;
-  }
-  player.hp=Math.max(0,player.hp-d);
-  player.flashTimer=18;snd('attack');
-  setMsg(msg,()=>{
-    if(player.hp<=0){bPhase='lost';bResultT=0;snd('gameover');}
-    else{bPhase='selecting';setMsg('');}
-  });
-}
-
-function doAttack(){
-  const d=dmg(player.atk,bEnemy.def);
-  bEnemy.hp=Math.max(0,bEnemy.hp-d);
-  bEnemy.flashTimer=20;snd('attack');
-  setMsg(`${player.name}の\nこうげき！\n${bEnemy.name}に　${d}の\nダメージ！`,afterPlayer);
-  bPhase='executing';
-}
-function doMagic(sp){
-  if(player.mp<sp.mp){setMsg('MPが　たりない！',()=>{bPhase='selecting';setMsg('');});bPhase='executing';return;}
-  player.mp-=sp.mp;
-  if(sp.type==='heal'){
-    const h=Math.floor(sp.power*(0.8+Math.random()*0.4));
-    player.hp=Math.min(player.maxHp,player.hp+h);snd('heal');
-    setMsg(`${player.name}は　${sp.name}を\nとなえた！\nHPが　${h}　かいふく！`,afterPlayer);
-  }else{
-    const d=Math.floor(sp.power*(0.8+Math.random()*0.4));
-    bEnemy.hp=Math.max(0,bEnemy.hp-d);bEnemy.flashTimer=25;snd('magic');
-    setMsg(`${player.name}は　${sp.name}を\nとなえた！\n${bEnemy.name}に　${d}の\nほのおダメージ！`,afterPlayer);
-  }
-  bPhase='executing';
-}
-function doItem(item){
-  const h=28+Math.random()*12|0;
-  player.hp=Math.min(player.maxHp,player.hp+h);
-  item.count--;snd('heal');
-  setMsg(`${player.name}は　${item.name}を\nつかった！\nHPが　${h}　かいふく！`,afterPlayer);
-  bPhase='executing';
-}
-
-function drawBattleBG(){
-  const gr=ctx.createLinearGradient(0,0,0,295);
-  gr.addColorStop(0,'#000022');gr.addColorStop(0.6,'#110033');gr.addColorStop(1,'#220011');
-  ctx.fillStyle=gr;ctx.fillRect(0,0,640,295);
-  ctx.fillStyle='rgba(255,255,255,0.8)';
-  for(let i=0;i<20;i++){const sx=(i*137+30)%640,sy=(i*91+15)%200;ctx.beginPath();ctx.arc(sx,sy,1,0,Math.PI*2);ctx.fill();}
-  const gg=ctx.createLinearGradient(0,265,0,295);
-  gg.addColorStop(0,'#220011');gg.addColorStop(1,'#110008');
-  ctx.fillStyle=gg;ctx.fillRect(0,265,640,30);
-}
-
-function drawBattle(){
-  bAnimT++;updateMsg();
-  drawBattleBG();
-
-  if(bEnemy){
-    if(bEnemy.flashTimer>0)bEnemy.flashTimer--;
-    drawEnemy(bEnemy,bAnimT);
-    // Enemy HP
-    win(10,8,310,58);
-    txt(bEnemy.name,26,30,16,'#ff9999');
-    hpBar('HP',16,36,295,bEnemy.hp,bEnemy.maxHp);
-  }
-
-  if(player.flashTimer>0){
-    ctx.fillStyle='rgba(255,60,60,0.35)';ctx.fillRect(0,0,640,295);
-  }
-
-  // Bottom panel
-  win(0,295,640,185);
-
-  // Player stats box
-  win(8,303,204,170);
-  txt(player.name,22,325,15,'#ffff88');txt(`Lv.${player.level}`,148,325,14,'#88ffff');
-  hpBar('HP',14,332,194,player.hp,player.maxHp);
-  hpBar('MP',14,353,194,player.mp,player.maxMp);
-  txt(`EXP: ${player.exp}`,14,392,12,'#88ff88');
-  txt(`G:   ${player.gold}`,14,410,12,'#ffcc44');
-  const yaku=player.items.find(i=>i.name==='やくそう');
-  txt(`やくそう: x${yaku?yaku.count:0}`,14,428,12,'#ffaaaa');
-
-  // Message window
-  win(220,303,280,110);
-  if(bMsgTgt){
-    wrapText(bMsg,15).forEach((l,i)=>txt(l,236,330+i*24,15,'#ffffff'));
-    if(bMsgDone&&bPhase!=='selecting'&&bPhase!=='won'&&bPhase!=='lost')
-      if(Math.floor(bAnimT/22)%2===0) txt('▼',472,400,14,'#ffffff');
-  }
-
-  // Command / sub-menu
-  if(bPhase==='selecting'){
-    win(510,303,125,170);
-    BCMDS.forEach((c,i)=>{
-      const isHov=mouseX>=510&&mouseX<=635&&mouseY>=315+i*38&&mouseY<=315+(i+1)*38;
-      const isSel=i===bCursor;
-      if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(511,316+i*38,123,34);}
-      else if(isHov){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(511,316+i*38,123,34);}
-      const col=isSel?'#ffff00':isHov?'#aaddff':'#ffffff';
-      txt((isSel?'▶':' ')+c,518,330+i*38,15,col);
-    });
-  }else if(bPhase==='spellmenu'){
-    win(510,303,125,170);
-    txt('まほう',518,324,13,'#ffaaff');
-    player.spells.forEach((sp,i)=>{
-      const can=player.mp>=sp.mp;
-      const isHov=mouseX>=510&&mouseX<=635&&mouseY>=340+i*38&&mouseY<=340+(i+1)*38;
-      const isSel=i===bSubCursor;
-      if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(511,341+i*38,123,34);}
-      else if(isHov&&can){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(511,341+i*38,123,34);}
-      const col=isSel?'#ffff00':can?isHov?'#aaddff':'#ffffff':'#888888';
-      txt((isSel?'▶':' ')+sp.name,516,350+i*38,14,col);
-      txt(`${sp.mp}MP`,580,350+i*38,11,'#9999ff');
-    });
-    txt('（Ｘ：もどる）',515,450,11,'#888888');
-  }else if(bPhase==='itemmenu'){
-    win(510,303,125,170);
-    txt('どうぐ',518,324,13,'#ffffaa');
-    const items=player.items.filter(it=>it.count>0);
-    if(!items.length) txt('なし',530,360,14,'#888888');
-    else items.forEach((it,i)=>{
-      const isHov=mouseX>=510&&mouseX<=635&&mouseY>=340+i*38&&mouseY<=340+(i+1)*38;
-      const isSel=i===bSubCursor;
-      if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(511,341+i*38,123,34);}
-      else if(isHov){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(511,341+i*38,123,34);}
-      const col=isSel?'#ffff00':isHov?'#aaddff':'#ffffff';
-      txt((isSel?'▶':' ')+it.name,516,350+i*38,14,col);
-      txt(`x${it.count}`,590,350+i*38,11,'#aaaaaa');
-    });
-    txt('（Ｘ：もどる）',515,450,11,'#888888');
-  }else if(bPhase==='won'){
-    bResultT++;
-    win(220,303,415,170);
-    txt('しょうり！',330,335,22,'#ffff00');
-    txt(`${bExpGain} EXP　かくとく！`,236,368,15,'#88ff88');
-    txt(`${bGoldGain} G　かくとく！`,236,392,15,'#ffcc44');
-    if(bLevelUp) txt(`レベルが　${player.level}に　あがった！`,236,418,15,'#ff88ff');
-    if(bResultT>80&&Math.floor(bResultT/28)%2===0) txt('Ｚキーで　続ける',316,455,13,'#aaaaaa');
-  }else if(bPhase==='lost'){
-    bResultT++;
-    win(160,303,320,170);
-    ctx.fillStyle='rgba(80,0,0,0.7)';ctx.fillRect(162,305,316,166);
-    txt('ゆうしゃは　たおれた...　',170,370,14,'#ff4444');
-    txt('あきらめるな！',205,400,15,'#ffaa88');
-    if(bResultT>80&&Math.floor(bResultT/28)%2===0) txt('Ｚキーで　やりなおす',190,445,13,'#aaaaaa');
-  }
-}
-
-function handleBattle(){
-  if(bPhase==='selecting'){
-    if(keyJust['ArrowUp']){bCursor=(bCursor-1+4)%4;snd('cursor');}
-    if(keyJust['ArrowDown']){bCursor=(bCursor+1)%4;snd('cursor');}
-    if(keyJust['z']||keyJust['Z']){
-      snd('confirm');
-      if(bCursor===0) doAttack();
-      else if(bCursor===1){bPhase='spellmenu';bSubCursor=0;}
-      else if(bCursor===2){bPhase='itemmenu';bSubCursor=0;}
-      else{
-        if(bEnemy.isBoss){setMsg('にげられない！',()=>{bPhase='selecting';setMsg('');});bPhase='executing';}
-        else if(Math.random()<0.65){gState='overworld';}
-        else{setMsg('にげられなかった！',()=>{enemyTurn();});bPhase='executing';}
-      }
-    }
-  }else if(bPhase==='spellmenu'){
-    if(keyJust['ArrowUp']){bSubCursor=(bSubCursor-1+player.spells.length)%player.spells.length;snd('cursor');}
-    if(keyJust['ArrowDown']){bSubCursor=(bSubCursor+1)%player.spells.length;snd('cursor');}
-    if(keyJust['z']||keyJust['Z']) doMagic(player.spells[bSubCursor]);
-    if(keyJust['x']||keyJust['X']){bPhase='selecting';snd('cancel');}
-  }else if(bPhase==='itemmenu'){
-    const items=player.items.filter(it=>it.count>0);
-    const n=Math.max(1,items.length);
-    if(keyJust['ArrowUp']){bSubCursor=(bSubCursor-1+n)%n;snd('cursor');}
-    if(keyJust['ArrowDown']){bSubCursor=(bSubCursor+1)%n;snd('cursor');}
-    if(keyJust['z']||keyJust['Z']){if(items.length) doItem(items[bSubCursor]);}
-    if(keyJust['x']||keyJust['X']){bPhase='selecting';snd('cancel');}
-  }else if(bPhase==='executing'||bPhase==='enemy_turn'){
-    if(bMsgDone&&(keyJust['z']||keyJust['Z'])){
-      const cb=bMsgCb;bMsgCb=null;bMsgTgt='';bMsg='';bMsgDone=false;
-      if(cb) cb();
-    }
-  }else if(bPhase==='won'){
-    bResultT++;
-    if(bResultT>80&&(keyJust['z']||keyJust['Z'])){
-      if(bEnemy.isBoss){gState='ending';endT=0;snd('victory');}
-      else{gState='overworld';}
-      bMsgTgt='';bMsg='';
-    }
-  }else if(bPhase==='lost'){
-    bResultT++;
-    if(bResultT>80&&(keyJust['z']||keyJust['Z'])){
-      player.hp=player.maxHp;player.mp=player.maxMp;
-      player.x=2;player.y=1;
-      gState='overworld';bMsgTgt='';bMsg='';
-    }
-  }
-}
-
-// ===== ENDING =====
-let endT=0;
-function drawEnding(){
-  endT++;
-  const gr=ctx.createLinearGradient(0,0,0,480);
-  gr.addColorStop(0,'#000033');gr.addColorStop(1,'#110022');
-  ctx.fillStyle=gr;ctx.fillRect(0,0,640,480);
-  ctx.fillStyle='rgba(255,255,255,0.9)';
-  for(let i=0;i<80;i++){
-    const sx=(i*137+20)%640,sy=(i*79+10)%480;
-    const br=Math.sin(endT*0.04+i*0.5)*0.5+0.5;
-    ctx.globalAlpha=br*0.8;ctx.beginPath();ctx.arc(sx,sy,1,0,Math.PI*2);ctx.fill();
-  }
-  ctx.globalAlpha=1;ctx.textAlign='center';
-  if(endT>60){
-    ctx.globalAlpha=Math.min(1,(endT-60)/50);
-    ctx.shadowColor='#ffdd00';ctx.shadowBlur=25;
-    ctx.fillStyle='#ffdd00';ctx.font='bold 46px "Courier New",monospace';
-    ctx.fillText('おめでとう！',320,140);
-    ctx.shadowBlur=0;ctx.globalAlpha=1;
-  }
-  if(endT>100){
-    ctx.globalAlpha=Math.min(1,(endT-100)/50);
-    ctx.fillStyle='#ffffff';ctx.font='20px "Courier New",monospace';
-    ctx.fillText('魔王ゾーマを　たおした！',320,200);
-    ctx.fillText('世界に　へいわが　もどった！',320,235);
-    ctx.globalAlpha=1;
-  }
-  if(endT>160){
-    ctx.globalAlpha=Math.min(1,(endT-160)/50);
-    win(160,270,320,150,ctx.globalAlpha);
-    ctx.fillStyle='#ffcc88';ctx.font='16px "Courier New",monospace';
-    ctx.fillText(`レベル：${player.level}`,320,305);
-    ctx.fillText(`ゴールド：${player.gold} G`,320,332);
-    ctx.fillText(`経験値：${player.exp} EXP`,320,359);
-    ctx.fillText(`HP：${player.hp} / ${player.maxHp}`,320,386);
-    ctx.globalAlpha=1;
-  }
-  if(endT>250&&Math.floor(endT/30)%2===0){
-    ctx.fillStyle='#aaaaaa';ctx.font='14px "Courier New",monospace';
-    ctx.fillText('Ｚキーで　タイトルへ',320,455);
-  }
-  ctx.textAlign='left';
-  if(endT>250&&(keyJust['z']||keyJust['Z'])){
-    gState='title';titleT=0;
-    player.hp=player.maxHp;player.mp=player.maxMp;
-    player.x=2;player.y=1;
-  }
-}
-
-// ===== 復活の呪文 =====
-// 64種カタカナ文字セット（6bit/文字 × 20文字 = 120bit）
-const SPELL_CHARS='アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビ';
-
-// ビット列エンコード
-function bitsWrite(arr,pos,val,bits){
-  for(let i=bits-1;i>=0;i--){arr[pos+bits-1-i]=(val>>i)&1;}
-  return pos+bits;
-}
-function bitsRead(arr,pos,bits){
-  let v=0;
-  for(let i=0;i<bits;i++) v=(v<<1)|arr[pos+i];
-  return[v,pos+bits];
-}
-
-// プレイヤー状態 → 呪文文字列（チェックサム込み）
-// ビット割当: level(7) hp(10) maxHp(10) mp(7) maxMp(7) atk(7) def(7)
-//             exp(14) expNext(14) gold(14) yakusou(7) x(5) y(4) chk(7)  = 120bit
-function encodePassword(){
-  const bits=new Array(120).fill(0);
-  const yaku=(player.items.find(i=>i.name==='やくそう')||{count:0}).count;
-  let p=0;
-  p=bitsWrite(bits,p,Math.min(player.level,127),7);
-  p=bitsWrite(bits,p,Math.min(player.hp,1023),10);
-  p=bitsWrite(bits,p,Math.min(player.maxHp,1023),10);
-  p=bitsWrite(bits,p,Math.min(player.mp,127),7);
-  p=bitsWrite(bits,p,Math.min(player.maxMp,127),7);
-  p=bitsWrite(bits,p,Math.min(player.atk,127),7);
-  p=bitsWrite(bits,p,Math.min(player.def,127),7);
-  p=bitsWrite(bits,p,Math.min(player.exp,16383),14);
-  p=bitsWrite(bits,p,Math.min(player.expNext,16383),14);
-  p=bitsWrite(bits,p,Math.min(player.gold,16383),14);
-  p=bitsWrite(bits,p,Math.min(yaku,127),7);
-  p=bitsWrite(bits,p,Math.min(player.x,31),5);
-  p=bitsWrite(bits,p,Math.min(player.y,15),4);
-  // チェックサム（先頭113bitの合計 mod 128）
-  let chk=0; for(let i=0;i<113;i++) chk=(chk+bits[i])%128;
-  bitsWrite(bits,p,chk,7);
-  // 6bitずつ文字に変換
-  let result='';
-  for(let i=0;i<20;i++){
-    let idx=0;
-    for(let b=0;b<6;b++) idx=(idx<<1)|bits[i*6+b];
-    result+=SPELL_CHARS[idx];
-  }
-  return result;
-}
-
-// 呪文文字列 → プレイヤー状態（復元）
-function decodePassword(str){
-  if(str.length!==20) return{ok:false,msg:'呪文は　２０文字　ひつようです'};
-  const bits=[];
-  for(const ch of str){
-    const idx=SPELL_CHARS.indexOf(ch);
-    if(idx<0) return{ok:false,msg:`「${ch}」は　ただしくない\n文字です`};
-    for(let b=5;b>=0;b--) bits.push((idx>>b)&1);
-  }
-  let p=0,v;
-  [v,p]=bitsRead(bits,p,7);  const level=v;
-  [v,p]=bitsRead(bits,p,10); const hp=v;
-  [v,p]=bitsRead(bits,p,10); const maxHp=v;
-  [v,p]=bitsRead(bits,p,7);  const mp=v;
-  [v,p]=bitsRead(bits,p,7);  const maxMp=v;
-  [v,p]=bitsRead(bits,p,7);  const atk=v;
-  [v,p]=bitsRead(bits,p,7);  const def=v;
-  [v,p]=bitsRead(bits,p,14); const exp=v;
-  [v,p]=bitsRead(bits,p,14); const expNext=v;
-  [v,p]=bitsRead(bits,p,14); const gold=v;
-  [v,p]=bitsRead(bits,p,7);  const yaku=v;
-  [v,p]=bitsRead(bits,p,5);  const px=v;
-  [v,p]=bitsRead(bits,p,4);  const py=v;
-  [v,  ]=bitsRead(bits,p,7);  const chkGot=v;
-  let chkCalc=0; for(let i=0;i<113;i++) chkCalc=(chkCalc+bits[i])%128;
-  if(chkCalc!==chkGot) return{ok:false,msg:'呪文が　まちがっています！\nもういちど　かくにんして\nください'};
-  if(level<1||maxHp<1) return{ok:false,msg:'データが　こわれています'};
-  return{ok:true,level,hp:Math.min(hp,maxHp),maxHp,mp:Math.min(mp,maxMp),maxMp,atk,def,exp,expNext,gold,yaku,px:Math.min(px,MW-1),py:Math.min(py,MH-1)};
-}
-
-function applyPassword(d){
-  player.level=d.level; player.hp=d.hp; player.maxHp=d.maxHp;
-  player.mp=d.mp; player.maxMp=d.maxMp; player.atk=d.atk; player.def=d.def;
-  player.exp=d.exp; player.expNext=d.expNext; player.gold=d.gold;
-  player.x=d.px; player.y=d.py;
-  const y=player.items.find(i=>i.name==='やくそう');
-  if(y) y.count=d.yaku; else if(d.yaku>0) player.items.push({name:'やくそう',count:d.yaku});
-}
-
-// ===== 呪文UI =====
-// カタカナキーボード 8列×8行 = 64文字
-const KB_COLS=8, KB_ROWS=8;
-let pwMode='show'; // 'show' or 'input'
-let pwInputArr=new Array(20).fill(''); // 入力中の文字
-let pwInputPos=0;  // カーソル位置（0-19）
-let pwKbRow=0, pwKbCol=0; // キーボードカーソル
-let pwMsg='', pwMsgT=0, pwResult=null;
-let pwFromState=''; // どこから来たか
-
-function openPassword(from,mode){
-  pwFromState=from; pwMode=mode;
-  pwMsg=''; pwMsgT=0; pwResult=null;
-  pwInputArr=new Array(20).fill('');
-  pwInputPos=0; pwKbRow=0; pwKbCol=0;
-  gState='password';
-}
-
-function drawPasswordScreen(){
-  // BG
-  const gr=ctx.createLinearGradient(0,0,0,480);
-  gr.addColorStop(0,'#000814');gr.addColorStop(1,'#001122');
-  ctx.fillStyle=gr; ctx.fillRect(0,0,640,480);
-
-  ctx.textAlign='center';
-  ctx.shadowColor='#00aaff'; ctx.shadowBlur=15;
-  ctx.fillStyle='#00ccff'; ctx.font='bold 22px "Courier New",monospace';
-  ctx.fillText('ふっかつの　じゅもん',320,32);
-  ctx.shadowBlur=0;
-
-  if(pwMode==='show'){
-    // 現在の状態を呪文化して表示
-    const pw=encodePassword();
-    win(80,50,480,110);
-    ctx.fillStyle='#aaddff'; ctx.font='13px "Courier New",monospace'; ctx.textAlign='center';
-    ctx.fillText('このじゅもんを　メモしてください',320,75);
-    // 10文字ずつ2行で表示
-    ctx.fillStyle='#ffff44'; ctx.font='bold 28px "Courier New",monospace';
-    ctx.letterSpacing='6px';
-    ctx.fillText(pw.slice(0,10),320,110);
-    ctx.fillText(pw.slice(10,20),320,148);
-    ctx.letterSpacing='0px';
-    // ステータスサマリ
-    win(80,175,480,120);
-    ctx.fillStyle='#88ccff'; ctx.font='13px "Courier New",monospace';
-    ctx.fillText(`Lv.${player.level}　HP:${player.hp}/${player.maxHp}　MP:${player.mp}/${player.maxMp}`,320,200);
-    ctx.fillText(`ATK:${player.atk}　DEF:${player.def}　EXP:${player.exp}`,320,222);
-    ctx.fillText(`GOLD:${player.gold}G　やくそう:${(player.items.find(i=>i.name==='やくそう')||{count:0}).count}こ`,320,244);
-    ctx.fillText(`フィールド座標 (${player.x}, ${player.y})`,320,268);
-    ctx.fillStyle='#888888'; ctx.font='13px "Courier New",monospace';
-    ctx.fillText('Ｘキーで　もどる',320,450);
-  }else{
-    // 入力モード
-    // 入力スロット（20文字）
-    win(30,48,580,70);
-    ctx.fillStyle='#aaddff'; ctx.font='13px "Courier New",monospace'; ctx.textAlign='center';
-    ctx.fillText('じゅもんを　にゅうりょくして　ください',320,68);
-    for(let i=0;i<20;i++){
-      const slotX=42+i*29, slotY=82, slotW=26, slotH=30;
-      const isCur=(i===pwInputPos);
-      ctx.fillStyle=isCur?'#003366':'#001133';
-      ctx.fillRect(slotX,slotY,slotW,slotH);
-      ctx.strokeStyle=isCur?'#00ffff':'#004488';
-      ctx.lineWidth=isCur?2:1; ctx.strokeRect(slotX,slotY,slotW,slotH);
-      if(pwInputArr[i]){
-        ctx.fillStyle=isCur?'#ffff00':'#ffffff';
-        ctx.font=`bold 16px "Courier New",monospace`;
-        ctx.fillText(pwInputArr[i],slotX+13,slotY+22);
-      }
-      if(isCur&&Math.floor(Date.now()/400)%2===0){
-        ctx.fillStyle='#00ffff'; ctx.fillRect(slotX+2,slotY+27,22,2);
-      }
-      if(i===9){ctx.fillStyle='#004488';ctx.fillRect(slotX+slotW+1,slotY+5,2,20);}
-    }
-
-    // キーボードグリッド
-    const KBX=30, KBY=130, KW=74, KH=34;
-    win(28,128,584,KB_ROWS*KH+16);
-    for(let r=0;r<KB_ROWS;r++){
-      for(let c=0;c<KB_COLS;c++){
-        const idx=r*KB_COLS+c;
-        if(idx>=64) break;
-        const kx=KBX+c*KW+2, ky=KBY+r*KH+8;
-        const isCur=(r===pwKbRow&&c===pwKbCol);
-        ctx.fillStyle=isCur?'#002255':'#001133';
-        ctx.fillRect(kx,ky,KW-4,KH-4);
-        ctx.strokeStyle=isCur?'#00ffff':'#003366';
-        ctx.lineWidth=1; ctx.strokeRect(kx,ky,KW-4,KH-4);
-        ctx.fillStyle=isCur?'#ffff00':'#ccddff';
-        ctx.font=`${isCur?'bold ':''}17px "Courier New",monospace`;
-        ctx.fillText(SPELL_CHARS[idx],kx+(KW-4)/2,ky+(KH-4)*0.68);
-      }
-    }
-
-    // 操作説明 + もどるボタン
-    win(30,408,580,56);
-    // もどるボタン
-    ctx.fillStyle='rgba(120,40,40,0.8)';ctx.fillRect(36,414,90,36);
-    ctx.strokeStyle='#ff8888';ctx.lineWidth=1;ctx.strokeRect(36,414,90,36);
-    ctx.fillStyle='#ffaaaa';ctx.font='bold 14px "Courier New",monospace';ctx.textAlign='center';
-    ctx.fillText('もどる',81,437);
-    ctx.fillStyle='#7799bb';ctx.font='12px "Courier New",monospace';
-    ctx.fillText('矢印：カーソル　Ｚ：入力　Ｘ：１文字消す　Enter：けってい',340,437);
-    ctx.textAlign='left';
-
-    // エラーメッセージ
-    if(pwMsg){
-      win(80,355,480,48);
-      ctx.fillStyle=pwResult?'#88ff88':'#ff6666';
-      ctx.font='14px "Courier New",monospace';
-      wrapText(pwMsg,28).slice(0,2).forEach((l,i)=>ctx.fillText(l,320,376+i*20));
-    }
-  }
-  ctx.textAlign='left';
-}
-
-function handlePasswordScreen(){
-  if(pwMode==='show'){
-    if(keyJust['x']||keyJust['X']||keyJust['z']||keyJust['Z']){
-      gState=pwFromState; snd('cancel');
-    }
-    return;
-  }
-  // 入力モード
-  if(keyJust['ArrowUp']){pwKbRow=(pwKbRow-1+KB_ROWS)%KB_ROWS;snd('cursor');}
-  if(keyJust['ArrowDown']){pwKbRow=(pwKbRow+1)%KB_ROWS;snd('cursor');}
-  if(keyJust['ArrowLeft']){pwKbCol=(pwKbCol-1+KB_COLS)%KB_COLS;snd('cursor');}
-  if(keyJust['ArrowRight']){pwKbCol=(pwKbCol+1)%KB_COLS;snd('cursor');}
-
-  // Escキーまたは「もどる」で即脱出
-  if(keyJust['Escape']||keyJust['Backspace']){
-    gState=pwFromState; snd('cancel'); return;
-  }
-
-  if(keyJust['z']||keyJust['Z']){
-    if(pwInputPos<20){
-      const idx=pwKbRow*KB_COLS+pwKbCol;
-      if(idx<64){ pwInputArr[pwInputPos]=SPELL_CHARS[idx]; pwInputPos++; snd('confirm'); }
-    }
-  }
-  if(keyJust['x']||keyJust['X']){
-    if(pwInputPos>0){ pwInputPos--; pwInputArr[pwInputPos]=''; snd('cancel'); }
-    else{ gState=pwFromState; snd('cancel'); }
-  }
-  if(keyJust['Enter']){
-    if(pwInputPos===20){
-      const result=decodePassword(pwInputArr.join(''));
-      if(result.ok){
-        applyPassword(result);
-        pwMsg='じゅもんを　にゅうりょくした！\nぼうけんを　さいかい！';
-        pwResult=true; snd('levelup');
-        setTimeout(()=>{ gState='overworld'; },1800);
-      }else{
-        pwMsg=result.msg; pwResult=false; snd('cancel');
-      }
-    }else{
-      pwMsg=`あと　${20-pwInputPos}文字　たりません`; pwResult=false; snd('cancel');
-    }
-  }
-}
-
-// ===== フィールドメニューに呪文オプション追加 =====
-let fieldMenu=false, fieldMenuCursor=0;
-const FIELD_OPTS=['ふっかつの　じゅもんを　みる','じゅもんを　にゅうりょくする','とじる'];
-
-function drawFieldMenu(){
-  win(380,260,250,130);
-  txt('メニュー',396,285,14,'#ffff88');
-  FIELD_OPTS.forEach((o,i)=>{
-    const col=i===fieldMenuCursor?'#ffff00':'#ffffff';
-    txt((i===fieldMenuCursor?'▶':' ')+o,388,310+i*28,12,col);
-  });
-}
-
-// ===== MAIN LOOP =====
-function loop(){
+// =====================================================================
+// ===== MAIN GAME LOOP ================================================
+// =====================================================================
+function gameLoop(){
   ctx.clearRect(0,0,640,480);
-  updateDpadHeld();
+
+  // 描画
   switch(gState){
-    case'title':
-      drawTitle();
-      if(keyJust['z']||keyJust['Z']){gState='overworld';snd('confirm');try{AC&&AC.resume();}catch(e){}}
-      break;
-    case'overworld':
-      drawOverworld();
-      if(fieldMenu){
-        drawFieldMenu();
-        if(keyJust['ArrowUp']){fieldMenuCursor=(fieldMenuCursor-1+3)%3;snd('cursor');}
-        if(keyJust['ArrowDown']){fieldMenuCursor=(fieldMenuCursor+1)%3;snd('cursor');}
-        if(keyJust['z']||keyJust['Z']){
-          snd('confirm');
-          if(fieldMenuCursor===0){fieldMenu=false;openPassword('overworld','show');}
-          else if(fieldMenuCursor===1){fieldMenu=false;openPassword('overworld','input');}
-          else{fieldMenu=false;}
-        }
-        if(keyJust['x']||keyJust['X']){fieldMenu=false;snd('cancel');}
-      }else{
-        if(keyJust['Enter']){fieldMenu=true;fieldMenuCursor=0;snd('cursor');}
-        else handleOverworld();
-      }
-      drawDpad();
-      break;
-    case'town':     drawTown();    handleTown(); break;
-    case'battle':   drawBattle();  handleBattle(); break;
-    case'password': drawPasswordScreen(); handlePasswordScreen(); break;
-    case'ending':   drawEnding();  break;
+    case'title':    drawTitle();    break;
+    case'overworld':drawOverworld();break;
+    case'battle':   drawBattle();   break;
+    case'town':     drawTown();     break;
+    case'password': if(pwState)drawPassword(); break;
+    case'ending':   drawEnding();   break;
   }
+
+  // オーバーワールド移動処理
+  processOverworld();
+
+  // 非同期入力の橋渡し
+  flushInput();
+
   for(const k in keyJust) delete keyJust[k];
-  requestAnimationFrame(loop);
+  requestAnimationFrame(gameLoop);
 }
-loop();
+
+// ===== START =====
+gameLoop();
+runGame();
 </script>
 </body>
 </html>
