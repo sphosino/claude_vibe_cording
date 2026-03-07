@@ -12,7 +12,7 @@ canvas{display:block;image-rendering:pixelated;border:3px solid #554433;box-shad
 </head>
 <body>
 <canvas id="c" width="640" height="480"></canvas>
-<div id="info">矢印キー：移動　Z：決定　X：キャンセル　Enter：メニュー（ふっかつの呪文）</div>
+<div id="info">矢印キー or Dパッド：移動　Z/クリック：決定　X：キャンセル　Enter/メニューボタン：呪文メニュー</div>
 <script>'use strict';
 
 // ===== CANVAS =====
@@ -108,6 +108,241 @@ document.addEventListener('keydown',e=>{
   e.preventDefault();
 });
 document.addEventListener('keyup',e=>{ keys[e.key]=false; });
+
+// ===== MOUSE INPUT =====
+// Canvasの実際の表示サイズとゲーム座標のスケール変換
+function getCanvasPos(e){
+  const r=C.getBoundingClientRect();
+  const scaleX=640/r.width, scaleY=480/r.height;
+  const cx=(e.clientX-r.left)*scaleX;
+  const cy=(e.clientY-r.top)*scaleY;
+  return{x:cx,y:cy};
+}
+
+// 仮想Dパッドの定義（オーバーワールド用）
+const DPAD={
+  size:52, margin:10,
+  get x(){return 640-this.size*3-this.margin*2;},
+  get y(){return 480-this.size*3-this.margin*2;},
+};
+function dpadBtn(dir){ // 0=up,1=right,2=down,3=left,4=center(Z),5=menu(Enter)
+  const s=DPAD.size, m=DPAD.margin, bx=DPAD.x, by=DPAD.y;
+  switch(dir){
+    case 0: return{x:bx+s,y:by,    w:s,h:s};
+    case 1: return{x:bx+s*2,y:by+s,w:s,h:s};
+    case 2: return{x:bx+s,y:by+s*2,w:s,h:s};
+    case 3: return{x:bx,   y:by+s, w:s,h:s};
+    case 4: return{x:bx+s, y:by+s, w:s,h:s}; // Zボタン
+    case 5: return{x:bx,   y:by,   w:s,h:s}; // メニュー
+  }
+}
+function inRect(px,py,r){return px>=r.x&&px<r.x+r.w&&py>=r.y&&py<r.y+r.h;}
+
+// 移動用の連続押し状態
+const dpadHeld={};
+let dpadMoveTimer=0;
+let mouseX=0, mouseY=0;
+
+C.addEventListener('mousemove',e=>{
+  const{x,y}=getCanvasPos(e);
+  mouseX=x; mouseY=y;
+  if(gState==='battle') handleBattleHover(x,y);
+});
+
+function handleBattleHover(x,y){
+  if(bPhase==='selecting'){
+    BCMDS.forEach((c,i)=>{
+      if(x>=510&&x<=635&&y>=315+i*38&&y<=315+(i+1)*38){
+        if(bCursor!==i){bCursor=i;snd('cursor');}
+      }
+    });
+  }else if(bPhase==='spellmenu'){
+    player.spells.forEach((sp,i)=>{
+      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
+        if(bSubCursor!==i){bSubCursor=i;snd('cursor');}
+      }
+    });
+  }else if(bPhase==='itemmenu'){
+    const items=player.items.filter(it=>it.count>0);
+    items.forEach((it,i)=>{
+      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
+        if(bSubCursor!==i){bSubCursor=i;snd('cursor');}
+      }
+    });
+  }
+}
+
+C.addEventListener('mousedown',e=>{
+  if(AC&&AC.state==='suspended') AC.resume();
+  const{x,y}=getCanvasPos(e);
+  handleMouseDown(x,y);
+});
+C.addEventListener('mouseup',e=>{
+  for(const k in dpadHeld) delete dpadHeld[k];
+});
+C.addEventListener('mouseleave',e=>{
+  for(const k in dpadHeld) delete dpadHeld[k];
+});
+
+// タッチ対応
+C.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  if(AC&&AC.state==='suspended') AC.resume();
+  const t=e.touches[0];
+  const r=C.getBoundingClientRect();
+  const scaleX=640/r.width, scaleY=480/r.height;
+  const cx=(t.clientX-r.left)*scaleX, cy=(t.clientY-r.top)*scaleY;
+  handleMouseDown(cx,cy);
+},{passive:false});
+C.addEventListener('touchend',e=>{
+  e.preventDefault();
+  for(const k in dpadHeld) delete dpadHeld[k];
+},{passive:false});
+
+function handleMouseDown(x,y){
+  switch(gState){
+    case'title': keyJust['z']=true; break;
+    case'overworld': handleOverworldClick(x,y); break;
+    case'town': handleTownClick(x,y); break;
+    case'battle': handleBattleClick(x,y); break;
+    case'password': handlePasswordClick(x,y); break;
+    case'ending': keyJust['z']=true; break;
+  }
+}
+
+function handleOverworldClick(x,y){
+  if(fieldMenu){
+    // フィールドメニュークリック
+    FIELD_OPTS.forEach((o,i)=>{
+      if(x>=388&&x<=628&&y>=302+i*28&&y<=302+(i+1)*28){
+        fieldMenuCursor=i; keyJust['z']=true;
+      }
+    });
+    return;
+  }
+  // Dパッドボタン
+  const dirs=['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'];
+  dirs.forEach((d,i)=>{
+    const b=dpadBtn(i);
+    if(inRect(x,y,b)){dpadHeld[d]=true;keyJust[d]=true;snd('step');}
+  });
+  // Zボタン（中央）
+  const zb=dpadBtn(4);
+  if(inRect(x,y,zb)) keyJust['z']=true;
+  // メニューボタン
+  const mb=dpadBtn(5);
+  if(inRect(x,y,mb)){keyJust['Enter']=true;}
+}
+
+function handleTownClick(x,y){
+  if(townPhase==='menu'){
+    TOWN_OPTS.forEach((o,i)=>{
+      if(x>=158&&x<=500&&y>=372+i*32&&y<=372+(i+1)*32){
+        townCursor=i; keyJust['z']=true;
+      }
+    });
+    if(x>=100&&x<=540&&y>=380&&y<=455) {} // 背景クリックは無視
+  }else{
+    if(townMsgT>70) keyJust['z']=true;
+  }
+}
+
+function handleBattleClick(x,y){
+  if(bPhase==='selecting'){
+    BCMDS.forEach((c,i)=>{
+      if(x>=510&&x<=635&&y>=315+i*38&&y<=315+(i+1)*38){
+        bCursor=i; keyJust['z']=true;
+      }
+    });
+  }else if(bPhase==='spellmenu'){
+    player.spells.forEach((sp,i)=>{
+      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
+        bSubCursor=i; keyJust['z']=true;
+      }
+    });
+    if(x>=510&&x<=635&&y>=440&&y<=470) keyJust['x']=true;
+  }else if(bPhase==='itemmenu'){
+    const items=player.items.filter(it=>it.count>0);
+    items.forEach((it,i)=>{
+      if(x>=510&&x<=635&&y>=340+i*38&&y<=340+(i+1)*38){
+        bSubCursor=i; keyJust['z']=true;
+      }
+    });
+    if(x>=510&&x<=635&&y>=440&&y<=470) keyJust['x']=true;
+  }else if(bPhase==='executing'||bPhase==='enemy_turn'){
+    if(bMsgDone&&x>=220&&x<=500&&y>=303&&y<=413) keyJust['z']=true;
+  }else if(bPhase==='won'||bPhase==='lost'){
+    if(bResultT>80) keyJust['z']=true;
+  }
+}
+
+function handlePasswordClick(x,y){
+  if(pwMode==='show'){
+    keyJust['z']=true; return;
+  }
+  // キーボードグリッド
+  const KBX=30,KBY=130,KW=74,KH=34;
+  if(x>=KBX&&x<=KBX+KW*KB_COLS&&y>=KBY+8&&y<=KBY+KB_ROWS*KH+8){
+    const c=Math.floor((x-KBX)/KW);
+    const r=Math.floor((y-KBY-8)/KH);
+    if(r>=0&&r<KB_ROWS&&c>=0&&c<KB_COLS){
+      pwKbRow=r; pwKbCol=c; keyJust['z']=true;
+    }
+  }
+  // 入力スロットのバックスペース（スロットをクリックで消す）
+  for(let i=0;i<20;i++){
+    const sx=42+i*29,sy=82;
+    if(x>=sx&&x<=sx+26&&y>=sy&&y<=sy+30&&i<pwInputPos){
+      // クリックしたスロット位置まで削除
+      while(pwInputPos>i){pwInputPos--;pwInputArr[pwInputPos]='';}
+      snd('cancel'); return;
+    }
+  }
+  // 戻るボタン（左下の「もどる」）
+  if(x>=36&&x<=126&&y>=414&&y<=450){ gState=pwFromState; snd('cancel'); return; }
+  // 決定ボタンエリア（下部）
+  if(y>=408&&y<=448) keyJust['Enter']=true;
+}
+
+// Dパッドの連続移動処理（mousedown保持中）
+function updateDpadHeld(){
+  if(gState!=='overworld'||fieldMenu) return;
+  dpadMoveTimer++;
+  if(dpadMoveTimer>=12){
+    dpadMoveTimer=0;
+    const dirs=['ArrowUp','ArrowRight','ArrowDown','ArrowLeft'];
+    dirs.forEach(d=>{ if(dpadHeld[d]) keyJust[d]=true; });
+  }
+}
+
+// ===== Dパッド描画 =====
+function drawDpad(){
+  const dirs=['↑','→','↓','←'];
+  const labels=['↑','→','↓','←'];
+  dirs.forEach((d,i)=>{
+    const b=dpadBtn(i);
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.fillRect(b.x,b.y,b.w,b.h);
+    ctx.strokeStyle='rgba(255,255,255,0.4)';
+    ctx.lineWidth=1;ctx.strokeRect(b.x,b.y,b.w,b.h);
+    ctx.fillStyle='rgba(255,255,255,0.7)';
+    ctx.font='bold 22px monospace';ctx.textAlign='center';
+    ctx.fillText(labels[i],b.x+b.w/2,b.y+b.h/2+8);
+  });
+  // Zボタン（中央：決定）
+  const zb=dpadBtn(4);
+  ctx.fillStyle='rgba(0,80,160,0.6)';ctx.fillRect(zb.x,zb.y,zb.w,zb.h);
+  ctx.strokeStyle='rgba(100,180,255,0.6)';ctx.lineWidth=1;ctx.strokeRect(zb.x,zb.y,zb.w,zb.h);
+  ctx.fillStyle='rgba(180,220,255,0.9)';ctx.font='bold 13px monospace';
+  ctx.fillText('決定',zb.x+zb.w/2,zb.y+zb.h/2+5);
+  // メニューボタン
+  const mb=dpadBtn(5);
+  ctx.fillStyle='rgba(60,40,0,0.6)';ctx.fillRect(mb.x,mb.y,mb.w,mb.h);
+  ctx.strokeStyle='rgba(200,160,80,0.5)';ctx.lineWidth=1;ctx.strokeRect(mb.x,mb.y,mb.w,mb.h);
+  ctx.fillStyle='rgba(220,180,80,0.9)';ctx.font='bold 11px monospace';
+  ctx.fillText('メニュー',mb.x+mb.w/2,mb.y+mb.h/2+4);
+  ctx.textAlign='left';
+}
 
 // ===== GAME STATE =====
 let gState='title'; // title,overworld,town,battle,ending
@@ -400,10 +635,10 @@ function drawOverworld(){
 function handleOverworld(){
   if(moveDelay>0){moveDelay--;return;}
   let dx=0,dy=0;
-  if(keys['ArrowUp'])    {dy=-1;player.dir=0;}
-  else if(keys['ArrowRight']){dx=1; player.dir=1;}
-  else if(keys['ArrowDown']) {dy=1; player.dir=2;}
-  else if(keys['ArrowLeft']) {dx=-1;player.dir=3;}
+  if(keys['ArrowUp']   ||keyJust['ArrowUp'])   {dy=-1;player.dir=0;}
+  else if(keys['ArrowRight']||keyJust['ArrowRight']){dx=1; player.dir=1;}
+  else if(keys['ArrowDown'] ||keyJust['ArrowDown']) {dy=1; player.dir=2;}
+  else if(keys['ArrowLeft'] ||keyJust['ArrowLeft']) {dx=-1;player.dir=3;}
 
   if(dx!==0||dy!==0){
     const nx=player.x+dx,ny=player.y+dy;
@@ -666,16 +901,24 @@ function drawBattle(){
   if(bPhase==='selecting'){
     win(510,303,125,170);
     BCMDS.forEach((c,i)=>{
-      const col=i===bCursor?'#ffff00':'#ffffff';
-      txt((i===bCursor?'▶':' ')+c,518,330+i*38,15,col);
+      const isHov=mouseX>=510&&mouseX<=635&&mouseY>=315+i*38&&mouseY<=315+(i+1)*38;
+      const isSel=i===bCursor;
+      if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(511,316+i*38,123,34);}
+      else if(isHov){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(511,316+i*38,123,34);}
+      const col=isSel?'#ffff00':isHov?'#aaddff':'#ffffff';
+      txt((isSel?'▶':' ')+c,518,330+i*38,15,col);
     });
   }else if(bPhase==='spellmenu'){
     win(510,303,125,170);
     txt('まほう',518,324,13,'#ffaaff');
     player.spells.forEach((sp,i)=>{
       const can=player.mp>=sp.mp;
-      const col=i===bSubCursor?'#ffff00':can?'#ffffff':'#888888';
-      txt((i===bSubCursor?'▶':' ')+sp.name,516,350+i*38,14,col);
+      const isHov=mouseX>=510&&mouseX<=635&&mouseY>=340+i*38&&mouseY<=340+(i+1)*38;
+      const isSel=i===bSubCursor;
+      if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(511,341+i*38,123,34);}
+      else if(isHov&&can){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(511,341+i*38,123,34);}
+      const col=isSel?'#ffff00':can?isHov?'#aaddff':'#ffffff':'#888888';
+      txt((isSel?'▶':' ')+sp.name,516,350+i*38,14,col);
       txt(`${sp.mp}MP`,580,350+i*38,11,'#9999ff');
     });
     txt('（Ｘ：もどる）',515,450,11,'#888888');
@@ -685,8 +928,12 @@ function drawBattle(){
     const items=player.items.filter(it=>it.count>0);
     if(!items.length) txt('なし',530,360,14,'#888888');
     else items.forEach((it,i)=>{
-      const col=i===bSubCursor?'#ffff00':'#ffffff';
-      txt((i===bSubCursor?'▶':' ')+it.name,516,350+i*38,14,col);
+      const isHov=mouseX>=510&&mouseX<=635&&mouseY>=340+i*38&&mouseY<=340+(i+1)*38;
+      const isSel=i===bSubCursor;
+      if(isSel){ctx.fillStyle='rgba(80,80,0,0.6)';ctx.fillRect(511,341+i*38,123,34);}
+      else if(isHov){ctx.fillStyle='rgba(40,40,80,0.7)';ctx.fillRect(511,341+i*38,123,34);}
+      const col=isSel?'#ffff00':isHov?'#aaddff':'#ffffff';
+      txt((isSel?'▶':' ')+it.name,516,350+i*38,14,col);
       txt(`x${it.count}`,590,350+i*38,11,'#aaaaaa');
     });
     txt('（Ｘ：もどる）',515,450,11,'#888888');
@@ -988,10 +1235,16 @@ function drawPasswordScreen(){
       }
     }
 
-    // 操作説明
-    win(30,408,580,40);
-    ctx.fillStyle='#7799bb'; ctx.font='12px "Courier New",monospace';
-    ctx.fillText('矢印：カーソル　Ｚ：入力　Ｘ：１文字消す　Enter：けってい',320,432);
+    // 操作説明 + もどるボタン
+    win(30,408,580,56);
+    // もどるボタン
+    ctx.fillStyle='rgba(120,40,40,0.8)';ctx.fillRect(36,414,90,36);
+    ctx.strokeStyle='#ff8888';ctx.lineWidth=1;ctx.strokeRect(36,414,90,36);
+    ctx.fillStyle='#ffaaaa';ctx.font='bold 14px "Courier New",monospace';ctx.textAlign='center';
+    ctx.fillText('もどる',81,437);
+    ctx.fillStyle='#7799bb';ctx.font='12px "Courier New",monospace';
+    ctx.fillText('矢印：カーソル　Ｚ：入力　Ｘ：１文字消す　Enter：けってい',340,437);
+    ctx.textAlign='left';
 
     // エラーメッセージ
     if(pwMsg){
@@ -1016,6 +1269,11 @@ function handlePasswordScreen(){
   if(keyJust['ArrowDown']){pwKbRow=(pwKbRow+1)%KB_ROWS;snd('cursor');}
   if(keyJust['ArrowLeft']){pwKbCol=(pwKbCol-1+KB_COLS)%KB_COLS;snd('cursor');}
   if(keyJust['ArrowRight']){pwKbCol=(pwKbCol+1)%KB_COLS;snd('cursor');}
+
+  // Escキーまたは「もどる」で即脱出
+  if(keyJust['Escape']||keyJust['Backspace']){
+    gState=pwFromState; snd('cancel'); return;
+  }
 
   if(keyJust['z']||keyJust['Z']){
     if(pwInputPos<20){
@@ -1060,6 +1318,7 @@ function drawFieldMenu(){
 // ===== MAIN LOOP =====
 function loop(){
   ctx.clearRect(0,0,640,480);
+  updateDpadHeld();
   switch(gState){
     case'title':
       drawTitle();
@@ -1082,6 +1341,7 @@ function loop(){
         if(keyJust['Enter']){fieldMenu=true;fieldMenuCursor=0;snd('cursor');}
         else handleOverworld();
       }
+      drawDpad();
       break;
     case'town':     drawTown();    handleTown(); break;
     case'battle':   drawBattle();  handleBattle(); break;
