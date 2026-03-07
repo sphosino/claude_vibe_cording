@@ -160,7 +160,7 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
     <div>敵陣1段目に玉が踏み込めば<span class="highlight">即勝利！</span>（トライルール）</div>
 
     <h3 style="margin-top:20px;">✦ 特別ルール②：駒の取得</h3>
-    <div>通常、取った駒は消滅しますが、以下の場合のみ<span class="highlight">持ち駒</span>にできます。</div>
+    <div>通常、取った駒は消滅しますが、以下の場合、<span class="highlight">持ち駒</span>にできます。</div>
     <ul>
       <li><span class="highlight">成り駒</span>を取ったとき</li>
       <li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li>
@@ -230,7 +230,7 @@ const DIFFICULTY_LEVELS = {
   normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:10, mobilityMult:0.7,  emoji:'⚔️' },
   hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:0,  mobilityMult:0.9,  emoji:'🔥' },
 };
-let currentDifficulty = 'normal';
+let currentDifficulty = 'easy';
 
 let AI_SEARCH_DEPTH    = DIFFICULTY_LEVELS.normal.depth;
 let AI_MOVE_CANDIDATES = DIFFICULTY_LEVELS.normal.cands;
