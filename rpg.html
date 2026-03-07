@@ -12,7 +12,7 @@ canvas{display:block;image-rendering:pixelated;border:3px solid #554433;box-shad
 </head>
 <body>
 <canvas id="c" width="640" height="480"></canvas>
-<div id="info">矢印キー：移動　Z：決定　X：キャンセル</div>
+<div id="info">矢印キー：移動　Z：決定　X：キャンセル　Enter：メニュー（ふっかつの呪文）</div>
 <script>'use strict';
 
 // ===== CANVAS =====
@@ -807,14 +807,285 @@ function drawEnding(){
   }
 }
 
+// ===== 復活の呪文 =====
+// 64種カタカナ文字セット（6bit/文字 × 20文字 = 120bit）
+const SPELL_CHARS='アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビ';
+
+// ビット列エンコード
+function bitsWrite(arr,pos,val,bits){
+  for(let i=bits-1;i>=0;i--){arr[pos+bits-1-i]=(val>>i)&1;}
+  return pos+bits;
+}
+function bitsRead(arr,pos,bits){
+  let v=0;
+  for(let i=0;i<bits;i++) v=(v<<1)|arr[pos+i];
+  return[v,pos+bits];
+}
+
+// プレイヤー状態 → 呪文文字列（チェックサム込み）
+// ビット割当: level(7) hp(10) maxHp(10) mp(7) maxMp(7) atk(7) def(7)
+//             exp(14) expNext(14) gold(14) yakusou(7) x(5) y(4) chk(7)  = 120bit
+function encodePassword(){
+  const bits=new Array(120).fill(0);
+  const yaku=(player.items.find(i=>i.name==='やくそう')||{count:0}).count;
+  let p=0;
+  p=bitsWrite(bits,p,Math.min(player.level,127),7);
+  p=bitsWrite(bits,p,Math.min(player.hp,1023),10);
+  p=bitsWrite(bits,p,Math.min(player.maxHp,1023),10);
+  p=bitsWrite(bits,p,Math.min(player.mp,127),7);
+  p=bitsWrite(bits,p,Math.min(player.maxMp,127),7);
+  p=bitsWrite(bits,p,Math.min(player.atk,127),7);
+  p=bitsWrite(bits,p,Math.min(player.def,127),7);
+  p=bitsWrite(bits,p,Math.min(player.exp,16383),14);
+  p=bitsWrite(bits,p,Math.min(player.expNext,16383),14);
+  p=bitsWrite(bits,p,Math.min(player.gold,16383),14);
+  p=bitsWrite(bits,p,Math.min(yaku,127),7);
+  p=bitsWrite(bits,p,Math.min(player.x,31),5);
+  p=bitsWrite(bits,p,Math.min(player.y,15),4);
+  // チェックサム（先頭113bitの合計 mod 128）
+  let chk=0; for(let i=0;i<113;i++) chk=(chk+bits[i])%128;
+  bitsWrite(bits,p,chk,7);
+  // 6bitずつ文字に変換
+  let result='';
+  for(let i=0;i<20;i++){
+    let idx=0;
+    for(let b=0;b<6;b++) idx=(idx<<1)|bits[i*6+b];
+    result+=SPELL_CHARS[idx];
+  }
+  return result;
+}
+
+// 呪文文字列 → プレイヤー状態（復元）
+function decodePassword(str){
+  if(str.length!==20) return{ok:false,msg:'呪文は　２０文字　ひつようです'};
+  const bits=[];
+  for(const ch of str){
+    const idx=SPELL_CHARS.indexOf(ch);
+    if(idx<0) return{ok:false,msg:`「${ch}」は　ただしくない\n文字です`};
+    for(let b=5;b>=0;b--) bits.push((idx>>b)&1);
+  }
+  let p=0,v;
+  [v,p]=bitsRead(bits,p,7);  const level=v;
+  [v,p]=bitsRead(bits,p,10); const hp=v;
+  [v,p]=bitsRead(bits,p,10); const maxHp=v;
+  [v,p]=bitsRead(bits,p,7);  const mp=v;
+  [v,p]=bitsRead(bits,p,7);  const maxMp=v;
+  [v,p]=bitsRead(bits,p,7);  const atk=v;
+  [v,p]=bitsRead(bits,p,7);  const def=v;
+  [v,p]=bitsRead(bits,p,14); const exp=v;
+  [v,p]=bitsRead(bits,p,14); const expNext=v;
+  [v,p]=bitsRead(bits,p,14); const gold=v;
+  [v,p]=bitsRead(bits,p,7);  const yaku=v;
+  [v,p]=bitsRead(bits,p,5);  const px=v;
+  [v,p]=bitsRead(bits,p,4);  const py=v;
+  [v,  ]=bitsRead(bits,p,7);  const chkGot=v;
+  let chkCalc=0; for(let i=0;i<113;i++) chkCalc=(chkCalc+bits[i])%128;
+  if(chkCalc!==chkGot) return{ok:false,msg:'呪文が　まちがっています！\nもういちど　かくにんして\nください'};
+  if(level<1||maxHp<1) return{ok:false,msg:'データが　こわれています'};
+  return{ok:true,level,hp:Math.min(hp,maxHp),maxHp,mp:Math.min(mp,maxMp),maxMp,atk,def,exp,expNext,gold,yaku,px:Math.min(px,MW-1),py:Math.min(py,MH-1)};
+}
+
+function applyPassword(d){
+  player.level=d.level; player.hp=d.hp; player.maxHp=d.maxHp;
+  player.mp=d.mp; player.maxMp=d.maxMp; player.atk=d.atk; player.def=d.def;
+  player.exp=d.exp; player.expNext=d.expNext; player.gold=d.gold;
+  player.x=d.px; player.y=d.py;
+  const y=player.items.find(i=>i.name==='やくそう');
+  if(y) y.count=d.yaku; else if(d.yaku>0) player.items.push({name:'やくそう',count:d.yaku});
+}
+
+// ===== 呪文UI =====
+// カタカナキーボード 8列×8行 = 64文字
+const KB_COLS=8, KB_ROWS=8;
+let pwMode='show'; // 'show' or 'input'
+let pwInputArr=new Array(20).fill(''); // 入力中の文字
+let pwInputPos=0;  // カーソル位置（0-19）
+let pwKbRow=0, pwKbCol=0; // キーボードカーソル
+let pwMsg='', pwMsgT=0, pwResult=null;
+let pwFromState=''; // どこから来たか
+
+function openPassword(from,mode){
+  pwFromState=from; pwMode=mode;
+  pwMsg=''; pwMsgT=0; pwResult=null;
+  pwInputArr=new Array(20).fill('');
+  pwInputPos=0; pwKbRow=0; pwKbCol=0;
+  gState='password';
+}
+
+function drawPasswordScreen(){
+  // BG
+  const gr=ctx.createLinearGradient(0,0,0,480);
+  gr.addColorStop(0,'#000814');gr.addColorStop(1,'#001122');
+  ctx.fillStyle=gr; ctx.fillRect(0,0,640,480);
+
+  ctx.textAlign='center';
+  ctx.shadowColor='#00aaff'; ctx.shadowBlur=15;
+  ctx.fillStyle='#00ccff'; ctx.font='bold 22px "Courier New",monospace';
+  ctx.fillText('ふっかつの　じゅもん',320,32);
+  ctx.shadowBlur=0;
+
+  if(pwMode==='show'){
+    // 現在の状態を呪文化して表示
+    const pw=encodePassword();
+    win(80,50,480,110);
+    ctx.fillStyle='#aaddff'; ctx.font='13px "Courier New",monospace'; ctx.textAlign='center';
+    ctx.fillText('このじゅもんを　メモしてください',320,75);
+    // 10文字ずつ2行で表示
+    ctx.fillStyle='#ffff44'; ctx.font='bold 28px "Courier New",monospace';
+    ctx.letterSpacing='6px';
+    ctx.fillText(pw.slice(0,10),320,110);
+    ctx.fillText(pw.slice(10,20),320,148);
+    ctx.letterSpacing='0px';
+    // ステータスサマリ
+    win(80,175,480,120);
+    ctx.fillStyle='#88ccff'; ctx.font='13px "Courier New",monospace';
+    ctx.fillText(`Lv.${player.level}　HP:${player.hp}/${player.maxHp}　MP:${player.mp}/${player.maxMp}`,320,200);
+    ctx.fillText(`ATK:${player.atk}　DEF:${player.def}　EXP:${player.exp}`,320,222);
+    ctx.fillText(`GOLD:${player.gold}G　やくそう:${(player.items.find(i=>i.name==='やくそう')||{count:0}).count}こ`,320,244);
+    ctx.fillText(`フィールド座標 (${player.x}, ${player.y})`,320,268);
+    ctx.fillStyle='#888888'; ctx.font='13px "Courier New",monospace';
+    ctx.fillText('Ｘキーで　もどる',320,450);
+  }else{
+    // 入力モード
+    // 入力スロット（20文字）
+    win(30,48,580,70);
+    ctx.fillStyle='#aaddff'; ctx.font='13px "Courier New",monospace'; ctx.textAlign='center';
+    ctx.fillText('じゅもんを　にゅうりょくして　ください',320,68);
+    for(let i=0;i<20;i++){
+      const slotX=42+i*29, slotY=82, slotW=26, slotH=30;
+      const isCur=(i===pwInputPos);
+      ctx.fillStyle=isCur?'#003366':'#001133';
+      ctx.fillRect(slotX,slotY,slotW,slotH);
+      ctx.strokeStyle=isCur?'#00ffff':'#004488';
+      ctx.lineWidth=isCur?2:1; ctx.strokeRect(slotX,slotY,slotW,slotH);
+      if(pwInputArr[i]){
+        ctx.fillStyle=isCur?'#ffff00':'#ffffff';
+        ctx.font=`bold 16px "Courier New",monospace`;
+        ctx.fillText(pwInputArr[i],slotX+13,slotY+22);
+      }
+      if(isCur&&Math.floor(Date.now()/400)%2===0){
+        ctx.fillStyle='#00ffff'; ctx.fillRect(slotX+2,slotY+27,22,2);
+      }
+      if(i===9){ctx.fillStyle='#004488';ctx.fillRect(slotX+slotW+1,slotY+5,2,20);}
+    }
+
+    // キーボードグリッド
+    const KBX=30, KBY=130, KW=74, KH=34;
+    win(28,128,584,KB_ROWS*KH+16);
+    for(let r=0;r<KB_ROWS;r++){
+      for(let c=0;c<KB_COLS;c++){
+        const idx=r*KB_COLS+c;
+        if(idx>=64) break;
+        const kx=KBX+c*KW+2, ky=KBY+r*KH+8;
+        const isCur=(r===pwKbRow&&c===pwKbCol);
+        ctx.fillStyle=isCur?'#002255':'#001133';
+        ctx.fillRect(kx,ky,KW-4,KH-4);
+        ctx.strokeStyle=isCur?'#00ffff':'#003366';
+        ctx.lineWidth=1; ctx.strokeRect(kx,ky,KW-4,KH-4);
+        ctx.fillStyle=isCur?'#ffff00':'#ccddff';
+        ctx.font=`${isCur?'bold ':''}17px "Courier New",monospace`;
+        ctx.fillText(SPELL_CHARS[idx],kx+(KW-4)/2,ky+(KH-4)*0.68);
+      }
+    }
+
+    // 操作説明
+    win(30,408,580,40);
+    ctx.fillStyle='#7799bb'; ctx.font='12px "Courier New",monospace';
+    ctx.fillText('矢印：カーソル　Ｚ：入力　Ｘ：１文字消す　Enter：けってい',320,432);
+
+    // エラーメッセージ
+    if(pwMsg){
+      win(80,355,480,48);
+      ctx.fillStyle=pwResult?'#88ff88':'#ff6666';
+      ctx.font='14px "Courier New",monospace';
+      wrapText(pwMsg,28).slice(0,2).forEach((l,i)=>ctx.fillText(l,320,376+i*20));
+    }
+  }
+  ctx.textAlign='left';
+}
+
+function handlePasswordScreen(){
+  if(pwMode==='show'){
+    if(keyJust['x']||keyJust['X']||keyJust['z']||keyJust['Z']){
+      gState=pwFromState; snd('cancel');
+    }
+    return;
+  }
+  // 入力モード
+  if(keyJust['ArrowUp']){pwKbRow=(pwKbRow-1+KB_ROWS)%KB_ROWS;snd('cursor');}
+  if(keyJust['ArrowDown']){pwKbRow=(pwKbRow+1)%KB_ROWS;snd('cursor');}
+  if(keyJust['ArrowLeft']){pwKbCol=(pwKbCol-1+KB_COLS)%KB_COLS;snd('cursor');}
+  if(keyJust['ArrowRight']){pwKbCol=(pwKbCol+1)%KB_COLS;snd('cursor');}
+
+  if(keyJust['z']||keyJust['Z']){
+    if(pwInputPos<20){
+      const idx=pwKbRow*KB_COLS+pwKbCol;
+      if(idx<64){ pwInputArr[pwInputPos]=SPELL_CHARS[idx]; pwInputPos++; snd('confirm'); }
+    }
+  }
+  if(keyJust['x']||keyJust['X']){
+    if(pwInputPos>0){ pwInputPos--; pwInputArr[pwInputPos]=''; snd('cancel'); }
+    else{ gState=pwFromState; snd('cancel'); }
+  }
+  if(keyJust['Enter']){
+    if(pwInputPos===20){
+      const result=decodePassword(pwInputArr.join(''));
+      if(result.ok){
+        applyPassword(result);
+        pwMsg='じゅもんを　にゅうりょくした！\nぼうけんを　さいかい！';
+        pwResult=true; snd('levelup');
+        setTimeout(()=>{ gState='overworld'; },1800);
+      }else{
+        pwMsg=result.msg; pwResult=false; snd('cancel');
+      }
+    }else{
+      pwMsg=`あと　${20-pwInputPos}文字　たりません`; pwResult=false; snd('cancel');
+    }
+  }
+}
+
+// ===== フィールドメニューに呪文オプション追加 =====
+let fieldMenu=false, fieldMenuCursor=0;
+const FIELD_OPTS=['ふっかつの　じゅもんを　みる','じゅもんを　にゅうりょくする','とじる'];
+
+function drawFieldMenu(){
+  win(380,260,250,130);
+  txt('メニュー',396,285,14,'#ffff88');
+  FIELD_OPTS.forEach((o,i)=>{
+    const col=i===fieldMenuCursor?'#ffff00':'#ffffff';
+    txt((i===fieldMenuCursor?'▶':' ')+o,388,310+i*28,12,col);
+  });
+}
+
 // ===== MAIN LOOP =====
 function loop(){
   ctx.clearRect(0,0,640,480);
   switch(gState){
-    case'title':    drawTitle();   if(keyJust['z']||keyJust['Z']){gState='overworld';snd('confirm');try{AC&&AC.resume();}catch(e){}} break;
-    case'overworld':drawOverworld();handleOverworld(); break;
+    case'title':
+      drawTitle();
+      if(keyJust['z']||keyJust['Z']){gState='overworld';snd('confirm');try{AC&&AC.resume();}catch(e){}}
+      break;
+    case'overworld':
+      drawOverworld();
+      if(fieldMenu){
+        drawFieldMenu();
+        if(keyJust['ArrowUp']){fieldMenuCursor=(fieldMenuCursor-1+3)%3;snd('cursor');}
+        if(keyJust['ArrowDown']){fieldMenuCursor=(fieldMenuCursor+1)%3;snd('cursor');}
+        if(keyJust['z']||keyJust['Z']){
+          snd('confirm');
+          if(fieldMenuCursor===0){fieldMenu=false;openPassword('overworld','show');}
+          else if(fieldMenuCursor===1){fieldMenu=false;openPassword('overworld','input');}
+          else{fieldMenu=false;}
+        }
+        if(keyJust['x']||keyJust['X']){fieldMenu=false;snd('cancel');}
+      }else{
+        if(keyJust['Enter']){fieldMenu=true;fieldMenuCursor=0;snd('cursor');}
+        else handleOverworld();
+      }
+      break;
     case'town':     drawTown();    handleTown(); break;
     case'battle':   drawBattle();  handleBattle(); break;
+    case'password': drawPasswordScreen(); handlePasswordScreen(); break;
     case'ending':   drawEnding();  break;
   }
   for(const k in keyJust) delete keyJust[k];
