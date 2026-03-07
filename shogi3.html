@@ -1583,7 +1583,7 @@ window.addEventListener('DOMContentLoaded', () => {
   canvas.addEventListener('click', handleClick);
   window.addEventListener('resize', fitCanvas);
   fitCanvas();
-  setDifficulty('normal');
+  setDifficulty(currentDifficulty);
   setCpuCollusion(true);
   setHumanPlayer(0);
 });
