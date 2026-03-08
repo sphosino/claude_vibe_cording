@@ -179,11 +179,11 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
     <div id="perf-info" style="font-size:11px;color:#666;min-height:14px;"></div>
     <div id="canvas-wrap"><canvas id="c"></canvas></div>
     <div id="btnRow">
-      <button onclick="init()">盤面を初期化</button>
+      <button id="init-btn" onclick="init()">盤面を初期化</button>
       <button id="hb0" onclick="setHumanPlayer(0)" style="background:#6a3500">🔵 青将で対局</button>
       <button id="hb1" onclick="setHumanPlayer(1)">🔴 赤将で対局</button>
       <button id="hb2" onclick="setHumanPlayer(2)">🟢 緑将で対局</button>
-      <button onclick="setView(viewPlayer===2?0:viewPlayer+1)">👁 視点切替</button>
+      <button id="view-btn" onclick="setView(viewPlayer===2?0:viewPlayer+1)">👁 視点切替</button>
       <button id="sp-btn" onclick="toggleSelfPlay()" style="background:#1a3a1a;border:1px solid #33bb55;color:#33bb55">🤖 自己対局</button>
     </div>
     <div id="diffRow">
@@ -452,12 +452,11 @@ function kickAI(){
 
 // ── 自己対局モード ──
 function setSelfPlayDiffBtns(locked){
-  ['beginner','easy','normal','hard'].forEach(k=>{
-    const btn=document.getElementById('diff-'+k);
-    if(btn){ btn.disabled=locked; btn.style.opacity=locked?'0.35':'1'; }
-  });
-  // 共闘ボタンも対局中は無効
-  ['col-on','col-off'].forEach(id=>{
+  // 自己対局中はプレイヤー選択・難易度・共闘・盤面初期化ボタンを無効化
+  ['init-btn',
+   'diff-beginner','diff-easy','diff-normal','diff-hard',
+   'col-on','col-off', 'sp-btn',
+   'hb0','hb1','hb2'].forEach(id=>{
     const btn=document.getElementById(id);
     if(btn){ btn.disabled=locked; btn.style.opacity=locked?'0.35':'1'; }
   });
