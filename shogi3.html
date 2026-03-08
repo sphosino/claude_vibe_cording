@@ -1541,7 +1541,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
     undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
     // turnPlayerの成分が最大の手を選ぶ（ノイズはaiMoveのrootのみ）
     if(bestScores === null || scores[turnPlayer] > bestScores[turnPlayer]){
-      bestScores = scores;
+      bestScores = scores.slice();
     }
   }
   return bestScores ?? evalStaticMaxN(bd, hd, elim);
