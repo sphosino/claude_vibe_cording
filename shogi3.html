@@ -258,19 +258,27 @@ let canvas, ctx;
 
 
 // ── AI定数 ──
-const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-
 // 難易度設定テーブル
+// cands=root候補数, candsDeep=最深ノード候補数, 中間は深さに応じて線形補完
 const DIFFICULTY_LEVELS = {
-  beginner: { label:'入門', depth:1, cands:3, noise:200, mobilityMult:0.5,  emoji:'🌱' }, // ±100 歩1枚分のブレ
-  easy:     { label:'初級', depth:2, cands:5, noise:80,  mobilityMult:0.7,  emoji:'🌿' }, // ±40  歩4割のブレ
-  normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:60, mobilityMult:0.9,  emoji:'⚔️' }, // ±30 歩3割のブレ
-  hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:20, mobilityMult:1.1,  emoji:'🔥' }, // ±10 わずかなブレ
+  beginner: { label:'入門', depth:1, cands:3, candsDeep:3, noise:200, mobilityMult:0.5, emoji:'🌱' },
+  easy:     { label:'初級', depth:3, cands:6, candsDeep:3, noise:80,  mobilityMult:0.7, emoji:'🌿' },
+  normal:   { label:'中級', depth:4, cands:9, candsDeep:3, noise:60,  mobilityMult:0.9, emoji:'⚔️' },
+  hard:     { label:'上級', depth:5, cands:12, candsDeep:3, noise:20,  mobilityMult:1.1, emoji:'🔥' },
 };
 let currentDifficulty = 'easy';
 
 let AI_SEARCH_DEPTH    = DIFFICULTY_LEVELS.normal.depth;
 let AI_MOVE_CANDIDATES = DIFFICULTY_LEVELS.normal.cands;
+let AI_MOVE_CANDIDATES_DEEP = DIFFICULTY_LEVELS.normal.candsDeep;
+
+// 残り深さに応じた候補数を線形補完
+// depth=AI_SEARCH_DEPTH(root)→cands、depth=1(最深)→candsDeep
+function candsForDepth(depth){
+  if(AI_SEARCH_DEPTH <= 1) return AI_MOVE_CANDIDATES;
+  const t = (depth - 1) / (AI_SEARCH_DEPTH - 1); // 0(最深)〜1(root)
+  return Math.round(AI_MOVE_CANDIDATES_DEEP + t * (AI_MOVE_CANDIDATES - AI_MOVE_CANDIDATES_DEEP));
+}
 let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
@@ -1466,7 +1474,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
     }
     let moves = allMovesOn(bd, hd, turnPlayer, elim);
     moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
-    moves = moves.slice(0, AI_MOVE_CANDIDATES);
+    // 深いノードほど候補を絞る（root側は多く、葉側は少なく）
+    moves = moves.slice(0, candsForDepth(depth));
     if(isHuman){
       let best = Infinity;
       for(const mv of moves){
@@ -1497,7 +1506,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
   // ── 三つ巴：max^n（スコア配列）──
   let moves = allMovesOn(bd, hd, turnPlayer, elim);
   moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
-  moves = moves.slice(0, AI_MOVE_CANDIDATES);
+  moves = moves.slice(0, candsForDepth(depth));
 
   let bestScores = null;
   for(const mv of moves){
@@ -2035,6 +2044,7 @@ function setDifficulty(level){
   currentDifficulty = level;
   AI_SEARCH_DEPTH    = cfg.depth;
   AI_MOVE_CANDIDATES = cfg.cands;
+  AI_MOVE_CANDIDATES_DEEP = cfg.candsDeep;
   AI_NOISE           = cfg.noise;
   AI_MOBILITY_MULT = cfg.mobilityMult;
   // ボタンハイライト更新
