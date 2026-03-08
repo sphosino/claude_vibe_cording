@@ -258,10 +258,10 @@ const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
 // 難易度設定テーブル
 const DIFFICULTY_LEVELS = {
-  beginner: { label:'入門', depth:1, cands:3, noise:300, mobilityMult:0.5,  emoji:'🌱' },
-  easy:     { label:'初級', depth:2, cands:5, noise:100, mobilityMult:0.7,  emoji:'🌿' },
-  normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:100, mobilityMult:0.9,  emoji:'⚔️' },
-  hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:0,  mobilityMult:1.1,  emoji:'🔥' },
+  beginner: { label:'入門', depth:1, cands:3, noise:200, mobilityMult:0.5,  emoji:'🌱' }, // ±100 歩1枚分のブレ
+  easy:     { label:'初級', depth:2, cands:5, noise:80,  mobilityMult:0.7,  emoji:'🌿' }, // ±40  歩4割のブレ
+  normal:   { label:'中級', depth: IS_MOBILE?3:4, cands: IS_MOBILE?6:7, noise:60, mobilityMult:0.9,  emoji:'⚔️' }, // ±30 歩3割のブレ
+  hard:     { label:'上級', depth: IS_MOBILE?4:5, cands: IS_MOBILE?7:8, noise:20, mobilityMult:1.1,  emoji:'🔥' }, // ±10 わずかなブレ
 };
 let currentDifficulty = 'easy';
 
@@ -925,6 +925,98 @@ function simApply(bd, hd, elim, mv, o){
 }
 
 
+// ── applyMoveInPlace / undoMoveInPlace ──
+// minimaxの内部ノードでボードコピーの代わりに使う
+// 戻り値のundoオブジェクトをundoMoveInPlaceに渡すと完全に元に戻る
+function applyMoveInPlace(bd, hd, elim, mv, o) {
+  const undo = {tryWin: false, handAdded: null, handIdx: -1, elimIdx: -1, drop: mv.drop};
+
+  if (mv.drop) {
+    const idx = hd[o].indexOf(mv.piece);
+    hd[o].splice(idx, 1);
+    bd[mv.tr][mv.tc] = {p: mv.piece, o, pr: false};
+    undo.handIdx = idx;
+    return undo;
+  }
+
+  const fromCell = bd[mv.fr][mv.fc];
+  const toCell   = bd[mv.tr][mv.tc];
+  undo.fromCell = fromCell; // 元オブジェクト参照を保存
+  undo.toCell   = toCell;
+
+  // 王を取る → tryWin + elim更新
+  if (toCell && toCell.p === 'OU') {
+    bd[mv.tr][mv.tc] = {p: fromCell.p, o, pr: mv.pro || fromCell.pr};
+    bd[mv.fr][mv.fc] = null;
+    undo.elimIdx = toCell.o;
+    elim[toCell.o] = true;
+    undo.tryWin = true;
+    return undo;
+  }
+
+  // 通常の取得：持ち駒に加えるか判定（simApplyと同じ条件）
+  if (toCell) {
+    let addToHand = false;
+    if (toCell.pr) {
+      addToHand = true;
+    } else {
+      const [kr, kc] = findKingOn(bd, toCell.o);
+      if (kr !== -1) {
+        let isBeyondCenter = false;
+        if      (toCell.o === 0) isBeyondCenter = (kr <= 4);
+        else if (toCell.o === 1) isBeyondCenter = (kr >= 4);
+        else if (toCell.o === 2) isBeyondCenter = (kc <= 4);
+        if (isBeyondCenter) {
+          addToHand = true;
+        } else {
+          const diff = countPiecesOn(bd, hd, toCell.o) - countPiecesOn(bd, hd, o);
+          if (diff >= 3) addToHand = true;
+        }
+      }
+    }
+    if (addToHand) {
+      hd[o].push(toCell.p);
+      undo.handAdded = toCell.p;
+    }
+  }
+
+  // 駒移動
+  bd[mv.tr][mv.tc] = {p: fromCell.p, o, pr: mv.pro || fromCell.pr};
+  bd[mv.fr][mv.fc] = null;
+
+  // トライ判定
+  if (fromCell.p === 'OU') {
+    if ((o===0 && mv.tr<=0) || (o===1 && mv.tr>=8) || (o===2 && mv.tc<=0)) {
+      undo.tryWin = true;
+    }
+  }
+
+  return undo;
+}
+
+function undoMoveInPlace(bd, hd, elim, mv, o, undo) {
+  if (undo.drop) {
+    bd[mv.tr][mv.tc] = null;
+    hd[o].splice(undo.handIdx, 0, mv.piece); // 元のインデックスに戻す
+    return;
+  }
+
+  // 盤面を元に戻す
+  bd[mv.fr][mv.fc] = undo.fromCell;
+  bd[mv.tr][mv.tc] = undo.toCell;
+
+  // 持ち駒を元に戻す
+  if (undo.handAdded !== null) {
+    const idx = hd[o].lastIndexOf(undo.handAdded);
+    if (idx >= 0) hd[o].splice(idx, 1);
+  }
+
+  // elimを元に戻す
+  if (undo.elimIdx >= 0) {
+    elim[undo.elimIdx] = false;
+  }
+}
+
 function countPiecesOn(b,h,o){
   let n=h[o].length;
   for(let r=0;r<9;r++) for(let c=0;c<9;c++) if(b[r][c]?.o===o) n++;
@@ -1049,6 +1141,58 @@ function calcEntryBonus(b, o){
   if(kr<0) return 0;
   const dist = o===0 ? kr : o===1 ? 8-kr : kc;
   return (Math.pow(2, Math.max(0, 4-dist)) - 1) * AI_ENTRY_MULT;
+}
+
+// max^n用：全プレイヤーのスコアを配列で返す（三つ巴専用）
+function evalStaticMaxN(b, h, elim){
+  evalStaticCount++;
+  const alive = [0,1,2].filter(o=>!elim[o]);
+  const dead  = [0,1,2].filter(o=> elim[o]);
+
+  // 生存1人 → 勝者MAX、敗者MIN
+  if(alive.length <= 1){
+    const scores = [0,0,0];
+    alive.forEach(o => scores[o] =  PV['OU']);
+    dead .forEach(o => scores[o] = -PV['OU']);
+    return scores;
+  }
+
+  const pieceScore = pieceScores(b,h,[0,1,2]);
+  const raw = {};
+  alive.forEach(o=>{
+    raw[o] = pieceScore[o] - (PV['OU'] || 0)
+           + calcMobility(b,o)   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
+           + calcKingSafety(b,o) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
+           + calcEntryBonus(b,o);
+  });
+
+  // 順位ベースの重み（evalStaticと同じ連合・止め刺しロジック）
+  const sorted = alive.slice().sort((a,b)=>raw[b]-raw[a]);
+  function enemyWeight(vp, enemy){
+    const myRank = sorted.indexOf(vp);
+    const enemyRank = sorted.indexOf(enemy);
+    if(myRank === 0){
+      const weakness = Math.max(0, raw[vp] - raw[enemy]) / (raw[vp] + 1);
+      return 1.0 + weakness * AI_FINISH_MULT;
+    } else {
+      const top = sorted[0];
+      const others = alive.filter(o=>o!==top);
+      const dominance = raw[top] - others.reduce((s,o)=>s+raw[o],0);
+      const coalition = Math.min(1, Math.max(0, dominance / AI_COALITION_THRESHOLD));
+      return enemyRank === 0 ? 1.0 + coalition * AI_COALITION_MULT : 1.0;
+    }
+  }
+
+  const scores = [0,0,0];
+  alive.forEach(vp=>{
+    let score = raw[vp];
+    alive.filter(o=>o!==vp).forEach(enemy=>{
+      score -= raw[enemy] * enemyWeight(vp, enemy);
+    });
+    scores[vp] = score;
+  });
+  dead.forEach(o => scores[o] = -PV['OU']);
+  return scores;
 }
 
 // ── 静的評価 ──
@@ -1276,57 +1420,82 @@ function quickMoveScore(bd, mv, owner) {
 // depth = 残り手数（1手ごとに-1）
 // rootAI: 自由対局モードで「誰の視点か」を示す（パラノイド探索）
 
+// max^n：各プレイヤーが自分のスコアを最大化（三つ巴）
+// 共闘モードはパラノイドのまま（スカラーを返す）
 function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
 
-  if(depth <= 0) return evalStatic(bd, hd, elim, cpuCollusion ? turnPlayer : rootAI);
-  if(turnPlayer === -1) return evalStatic(bd, hd, elim, cpuCollusion ? turnPlayer : rootAI);
-
-  const aliveCount = elim.filter(e=>!e).length;
-  if(aliveCount <= 1) return evalStatic(bd, hd, elim, cpuCollusion ? turnPlayer : rootAI);
-
-  // 自由対局: rootAI のみ最大化、他は全員「敵」として最小化（パラノイド）
-  // 共闘モード: 人間のみ最小化、CPU全員最大化
-  let isHuman;
-  if(!cpuCollusion){
-    isHuman = (turnPlayer !== rootAI); // rootAI以外は全員ミニマイザー
-  } else if(humanEliminated){
-    const liveCpus = [0,1,2].filter(o=>!elim[o]);
-    isHuman = liveCpus.length >= 2 && turnPlayer === liveCpus[1];
-  } else {
-    isHuman = turnPlayer === humanPlayer;
+  if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
+    if(cpuCollusion) return evalStatic(bd, hd, elim, rootAI);
+    return evalStaticMaxN(bd, hd, elim);
+  }
+  if(depth <= 0){
+    if(cpuCollusion) return evalStatic(bd, hd, elim, rootAI);
+    return evalStaticMaxN(bd, hd, elim);
   }
 
-  const nxt = nextAliveOn(elim, turnPlayer);
+  // ── 共闘モード：パラノイド（スカラー）──
+  if(cpuCollusion){
+    let isHuman;
+    if(humanEliminated){
+      const liveCpus = [0,1,2].filter(o=>!elim[o]);
+      isHuman = liveCpus.length >= 2 && turnPlayer === liveCpus[1];
+    } else {
+      isHuman = turnPlayer === humanPlayer;
+    }
+    let moves = allMovesOn(bd, hd, turnPlayer, elim);
+    moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
+    moves = moves.slice(0, AI_MOVE_CANDIDATES);
+    if(isHuman){
+      let best = Infinity;
+      for(const mv of moves){
+        const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+        if(undo.tryWin){ undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); return AI_SCORE_TRYLOSE; }
+        const nxt = nextAliveOn(elim, turnPlayer);
+        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI);
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+        best = Math.min(best, score); beta = Math.min(beta, score);
+        if(beta <= alpha) break;
+      }
+      return best;
+    } else {
+      let best = -Infinity;
+      for(const mv of moves){
+        const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+        if(undo.tryWin){ undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); return AI_SCORE_TRYWIN; }
+        const nxt = nextAliveOn(elim, turnPlayer);
+        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI);
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+        best = Math.max(best, score); alpha = Math.max(alpha, score);
+        if(beta <= alpha) break;
+      }
+      return best;
+    }
+  }
 
+  // ── 三つ巴：max^n（スコア配列）──
   let moves = allMovesOn(bd, hd, turnPlayer, elim);
-  moves.sort((a, b) => quickMoveScore(bd, b, turnPlayer) - quickMoveScore(bd, a, turnPlayer));
+  moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
   moves = moves.slice(0, AI_MOVE_CANDIDATES);
 
-  if(isHuman){
-    let best = Infinity;
-    for(const mv of moves){
-      const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-      if(tryWin) return AI_SCORE_TRYLOSE;
-      const nxtH = nextAliveOn(newElim, turnPlayer);
-      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxtH, rootAI) + (Math.random()-0.5)*AI_NOISE;
-      best = Math.min(best, score);
-      beta = Math.min(beta, score);
-      if(beta <= alpha) break;
+  let bestScores = null;
+  for(const mv of moves){
+    const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+    if(undo.tryWin){
+      // 王を取った → turnPlayerが勝利
+      const s = [0,0,0];
+      [0,1,2].forEach(o => s[o] = o===turnPlayer ? AI_SCORE_TRYWIN : -AI_SCORE_TRYWIN);
+      undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+      return s; // 即返す（これ以上探索不要）
     }
-    return best;
-  } else {
-    let best = -Infinity;
-    for(const mv of moves){
-      const {b:nb, h:nh, elim:newElim, tryWin} = simApply(bd, hd, elim, mv, turnPlayer);
-      if(tryWin) return AI_SCORE_TRYWIN;
-      const nxt2 = nextAliveOn(newElim, turnPlayer);
-      const score = minimaxRound(nb, nh, newElim, depth-1, alpha, beta, nxt2, rootAI)+ (Math.random()-0.5)*AI_NOISE;
-      best = Math.max(best, score);
-      alpha = Math.max(alpha, score);
-      if(beta <= alpha) break;
+    const nxt = nextAliveOn(elim, turnPlayer);
+    const scores = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI);
+    undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+    // turnPlayerの成分が最大の手を選ぶ（ノイズはaiMoveのrootのみ）
+    if(bestScores === null || scores[turnPlayer] > bestScores[turnPlayer]){
+      bestScores = scores;
     }
-    return best;
   }
+  return bestScores ?? evalStaticMaxN(bd, hd, elim);
 }
 
 // 動いた後に王がすぐ取られるかチェック（自爆防止）
@@ -1354,9 +1523,10 @@ function aiMove(o,bd,hd,elim){
 
   // 王手回避手をsliceで落とさないよう先に分離して保護
   const evasions = moves.filter(mv => {
-    if(mv.drop) return false;
-    const {b:nb, elim:newElim} = simApply(bd,hd,elim,mv,o);
-    return !newElim[o] && !kingWouldBeCaptured(nb,o,newElim);
+    const undo = applyMoveInPlace(bd, hd, elim, mv, o);
+    const safe = !elim[o] && !kingWouldBeCaptured(bd, o, elim);
+    undoMoveInPlace(bd, hd, elim, mv, o, undo);
+    return safe; // 打ち駒も含む（合駒で王手回避可能）
   });
   const inCheck = kingWouldBeCaptured(bd,o,elim);
   const candidates = inCheck
@@ -1373,16 +1543,16 @@ function aiMove(o,bd,hd,elim){
         if(o===0&&mv.tr===0) return mv;
       }
     }
-    const {b:nb,h:nh,elim:newElim,tryWin}=simApply(bd,hd,elim,mv,o);
-    // 王を取れるなら即返す
-    if(tryWin) return mv;
+    const undo = applyMoveInPlace(bd, hd, elim, mv, o);
+    // 王を取れるなら即返す（undoしてから返す）
+    if(undo.tryWin){ undoMoveInPlace(bd, hd, elim, mv, o, undo); return mv; }
     // 王手放置・自爆手は除外
-    if(!newElim[o] && kingWouldBeCaptured(nb,o,newElim)) continue;
-    const nxt = nextAliveOn(newElim, o);
-    const searchDepth = AI_SEARCH_DEPTH;
-    const v = minimaxRound(nb, nh, newElim, searchDepth, -Infinity, Infinity, nxt, o)
-            + (Math.random()-0.5)*AI_NOISE; // root levelにもnoiseを加える
-    
+    if(!elim[o] && kingWouldBeCaptured(bd, o, elim)){ undoMoveInPlace(bd, hd, elim, mv, o, undo); continue; }
+    const nxt = nextAliveOn(elim, o);
+    const result = minimaxRound(bd, hd, elim, AI_SEARCH_DEPTH, -Infinity, Infinity, nxt, o);
+    // max^nは配列、共闘モードはスカラー
+    const v = (Array.isArray(result) ? result[o] : result) + (Math.random()-0.5)*AI_NOISE;
+    undoMoveInPlace(bd, hd, elim, mv, o, undo);
     if(v>bestScore){bestScore=v;best=mv;}
   }
 
