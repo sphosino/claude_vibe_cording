@@ -305,23 +305,25 @@ let AI_MOVE_CANDIDATES_DEEP = DIFFICULTY_LEVELS.normal.candsDeep;
 let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
-const AI_MOBILITY_SCALE      = 3;    // モビリティ1マスあたりの点数（evalStatic・quickMoveScore・openRoad共通）
-const AI_QMS_CAPTURE_MULT    = 10;   // quickMoveScore: 駒取り手の優先倍率
-const AI_QMS_HAND_COST       = 0.04; // quickMoveScore: 持ち駒を打つコスト率（駒価値×この値）
-const AI_THREAT_SCALE        = 0.2;  // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値がモビリティに加算）
-const AI_ENTRY_MULT          = 120;   // 入玉距離ボーナス係数（4段目〜1段目で加速、最大≒3720点）
-const AI_ENTRY_BLOCK_RATE    = 0.15;  // 入玉阻止ボーナス係数（最大≒129点）
-const AI_KING_SAFETY_MULT      = 1000; // 王の安全度スコア係数（飛車1枚分程度の影響力）
-const AI_KING_SAFETY_DENOM_EXP = 0.9;  // 安全度分母の指数（広い場所ほど満点が高い）
-const AI_KING_SAFETY_DANGER    = 0.15; // 王周囲への敵利きペナルティ係数
-const AI_COALITION_THRESHOLD   = 1500; // 連合発動の独走スコア差しきい値
-const AI_COALITION_MULT        = 0.5;  // 連合時の上位プレイヤーへの重み増加量
-const AI_FINISH_MULT           = 0.4;  // 1位が弱い敵を狙う際の重み増加量
-const AI_HAND_BONUS_RATE = 1.4;     // 持ち駒の価値倍率（手駒は盤上より少し高評価）
-const AI_SCORE_TRYWIN    = 1800000; // 勝利局面スコア
-const AI_SCORE_TRYLOSE   = -1500000;// 敗北局面スコア
-const AI_DELAY_MS        = 400;     // AI着手後の表示待機(ms)
-const AI_SKIP_DELAY_MS   = 800;     // スキップ時の待機(ms)
+const AI_MOBILITY_SCALE        = 3;       // モビリティ1マスあたりの点数（evalStatic・quickMoveScore・openRoad共通）
+const AI_QMS_CAPTURE_MULT      = 10;      // quickMoveScore: 駒取り手の優先倍率
+const AI_QMS_HAND_COST         = 0.04;   // quickMoveScore: 持ち駒を打つコスト率（駒価値×この値）
+const AI_THREAT_SCALE          = 0.2;    // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値）
+const AI_ENTRY_MULT            = 120;    // 入玉距離ボーナス係数（4段目から加速、最大≒3720点）
+const AI_ENTRY_DEPTH           = 5;      // 入玉ボーナス階数（5=4段目から評価開始）
+const AI_ENTRY_BLOCK_RATE      = 0.15;   // 入玉阻止ボーナス係数（入玉ボーナスの15%）
+const AI_KING_SAFETY_MULT      = 1000;   // 王の安全度スコア係数（飛車1枚分程度の影響力）
+const AI_KING_SAFETY_DENOM_EXP = 0.9;   // 安全度分母の指数（広い場所ほど満点が高い）
+const AI_KING_SAFETY_DANGER    = 0.15;   // 王周囲への敵利きペナルティ係数
+const AI_COALITION_THRESHOLD   = 1500;   // 連合発動の独走スコア差しきい値
+const AI_COALITION_MULT        = 0.5;    // 連合時の上位プレイヤーへの重み増加量
+const AI_FINISH_MULT           = 0.4;    // 1位が弱い敵を狙う際の重み増加量
+const AI_HAND_BONUS_RATE       = 1.4;    // 持ち駒の価値倍率（手駒は盤上より少し高評価）
+const AI_SCORE_TRYWIN          = 1800000;  // 勝利局面スコア
+const AI_SCORE_TRYLOSE         = -1500000; // 敗北局面スコア
+const AI_DELAY_MS              = 400;    // AI着手後の表示待機(ms)
+const AI_SKIP_DELAY_MS         = 800;    // スキップ時の待機(ms)
+const AI_SELFPLAY_NOISE        = 100;    // 自己対局時のノイズ量
 let evalStaticCount = 0;            // パフォーマンス計測用
 const PV  ={FU:100,KY:300,KE:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:10000000};
 const PVP ={FU:400,KY:200,KE:150,GIN:100,KAKU:500,HI:450};
@@ -557,7 +559,7 @@ function toggleSelfPlay(){
     selfPlayStartHand  = hand.map(h=>h.slice());
     selfPlayStartElim  = eliminated.slice();
     // noise増加・三つ巴固定（humanPlayer=-1で共闘は誤動作するため）
-    AI_NOISE=100;
+    AI_NOISE=AI_SELFPLAY_NOISE;
     cpuCollusion=false;
     humanPlayer=-1;
     humanEliminated=false;
@@ -1237,7 +1239,7 @@ function calcEntryBonus(b, o){
   const [kr,kc] = findKingOn(b, o);
   if(kr<0) return 0;
   const dist = o===0 ? kr : o===1 ? 8-kr : kc;
-  return (Math.pow(2, Math.max(0, 5-dist)) - 1) * AI_ENTRY_MULT;
+  return (Math.pow(2, Math.max(0, AI_ENTRY_DEPTH-dist)) - 1) * AI_ENTRY_MULT;
 }
 
 // max^n用：全プレイヤーのスコアを配列で返す（三つ巴専用）
@@ -1542,7 +1544,7 @@ function quickMoveScore(bd, mv, owner) {
     const covered = afterMoves.filter(([r,c]) => pathSquares.has(r+','+c)).length;
     if(covered > 0){
       const dist = eo===0 ? ekr : eo===1 ? 8-ekr : ekc;
-      entryBlockBonus += covered * Math.max(1, 5-dist) * AI_ENTRY_MULT * AI_ENTRY_BLOCK_RATE;
+      entryBlockBonus += covered * Math.max(1, AI_ENTRY_DEPTH-dist) * AI_ENTRY_MULT * AI_ENTRY_BLOCK_RATE;
     }
   }
 
