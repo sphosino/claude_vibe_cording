@@ -420,21 +420,26 @@ function kickAI(){
   if(gover) return;
   // 通常モード: humanPlayerのターンはスキップ
   if(!selfPlayMode && turn===humanPlayer) return;
-  if(!selfPlayMode) setStatus(pName(turn)+'が考え中...');
-  if(!selfPlayMode) render();
+  const showBoard = !selfPlayMode || currentDifficulty==='normal' || currentDifficulty==='hard';
+  setStatus(pName(turn)+'が考え中...');
+  if(showBoard) render();
   const _g=gameGen;
-  // 自己対局モードはdelayなしで即実行
+  // 自己対局モードはdelayなしで即実行（ただし描画反映のため最小delay）
   const delay = selfPlayMode ? 0 : AI_DELAY_MS;
+  const thinkDelay = (currentDifficulty==='normal'||currentDifficulty==='hard') ? 50 : 16;
   setTimeout(()=>{
     if(_g!==gameGen||gover) return;
-    try{
-      const mv=aiMove(turn,board,hand,eliminated);
-      if(mv){ applyMove(mv,turn); if(!selfPlayMode) render(); if(!gover) nextTurn(board); }
-      else { if(!gover) nextTurn(board); }
-    }catch(e){
-      console.error('aiMove error:',e);
-      if(!gover) nextTurn(board);
-    }
+    setTimeout(()=>{
+      if(_g!==gameGen||gover) return;
+      try{
+        const mv=aiMove(turn,board,hand,eliminated);
+        if(mv){ applyMove(mv,turn); if(showBoard) render(); if(!gover) nextTurn(board); }
+        else { if(!gover) nextTurn(board); }
+      }catch(e){
+        console.error('aiMove error:',e);
+        if(!gover) nextTurn(board);
+      }
+    }, thinkDelay);
   },delay);
 }
 
