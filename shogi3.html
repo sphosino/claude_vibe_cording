@@ -1457,7 +1457,7 @@ function quickMoveScore(bd, mv, owner) {
     const covered = afterMoves.filter(([r,c]) => pathSquares.has(r+','+c)).length;
     if(covered > 0){
       const dist = eo===0 ? ekr : eo===1 ? 8-ekr : ekc;
-      entryBlockBonus += covered * Math.max(1, 5-dist) * AI_ENTRY_MULT * 0.03;
+      entryBlockBonus += covered * Math.max(1, 5-dist) * AI_ENTRY_MULT * 0.06;
     }
   }
 
