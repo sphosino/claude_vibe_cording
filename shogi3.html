@@ -162,10 +162,10 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
     <h3 style="margin-top:20px;">✦ 特別ルール②：駒の取得</h3>
     <div>通常、取った駒は消滅しますが、以下の場合、<span class="highlight">持ち駒</span>にできます。</div>
     <ul>
+      <li><span class="highlight">脱落したプレイヤーがいる</span>とき</li>
       <li><span class="highlight">成り駒</span>を取ったとき</li>
       <li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li>
       <li><span class="highlight">玉が5段目以上</span>に進んでいる相手から取ったとき</li>
-      <li>誰かが脱落している時</li>
     </ul>
 
     <div class="warning" id="collusion-warning">
@@ -1086,6 +1086,91 @@ function calcAllStats(b){
   return {mobility, kingSafety};
 }
 
+// ── 共闘モード用評価ヘルパー ──
+// CPU同士を「味方」として扱い、CPU連合 vs 人間の視点で計算
+// mobilityHu: 人間の利きスコア
+// mobilityCpu: CPU連合の合計利きスコア
+// kingSafety: 各プレイヤーの王安全度（人間の周囲はCPU全体の利きが敵）
+function calcCollusionStats(b, hu){
+  const cpus = [0,1,2].filter(o => o !== hu);
+  const moves = [{}, {}, {}];
+  const attackedBy = {};
+  for(let o=0;o<3;o++) moves[o] = new Set();
+
+  // 全駒の利きを一括収集
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(!cell) continue;
+    rawMoves(b, r, c).forEach(([dr,dc])=>{
+      moves[cell.o].add(dr+','+dc);
+      const key = dr+','+dc;
+      if(!attackedBy[key]) attackedBy[key] = new Set();
+      attackedBy[key].add(cell.o);
+    });
+  }
+
+  // ハンギング判定：「敵」= 異陣営（CPU同士は味方なのでハンギングにならない）
+  const isEnemy = (a, b) => (a === hu) !== (b === hu); // 陣営が違うか
+  const hangingSet = [{}, {}, {}];
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(!cell) continue;
+    const key = r+','+c;
+    if(attackedBy[key]){
+      for(const eo of attackedBy[key]){
+        if(isEnemy(eo, cell.o)){ hangingSet[cell.o][key] = true; break; }
+      }
+    }
+  }
+
+  // mobility計算（脅威ボーナス込み・陣営単位）
+  const mobility = [0, 0, 0];
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(!cell) continue;
+    const o = cell.o;
+    const hanging = !!hangingSet[o][r+','+c];
+    const myVal = PV[cell.p] || 0;
+    rawMoves(b, r, c).forEach(([dr,dc])=>{
+      if(hanging) return;
+      const enemy = b[dr]?.[dc];
+      if(enemy && isEnemy(o, enemy.o) && enemy.p !== 'OU'){
+        const enemyVal = PV[enemy.p] || 0;
+        const ratio = Math.min(1.0, enemyVal / (myVal + 1));
+        mobility[o] += enemyVal * ratio * AI_THREAT_SCALE;
+      }
+    });
+  }
+  for(let o=0;o<3;o++) mobility[o] += moves[o].size;
+
+  // kingSafety計算（味方陣営の利きでcovered、敵陣営の利きがdanger）
+  const kingSafety = [0, 0, 0];
+  for(let o=0;o<3;o++){
+    const [kr,kc] = findKingOn(b, o);
+    if(kr<0) continue;
+    let covered=0, total=0, danger=0;
+    for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+      const nr=kr+dr, nc=kc+dc;
+      if(nr<0||nr>=9||nc<0||nc>=9) continue;
+      total++;
+      const cell = b[nr][nc];
+      const key = nr+','+nc;
+      // 味方の駒か利きでカバー
+      const allyCover = [o, ...( o===hu ? [] : cpus )];
+      if(cell && !isEnemy(cell.o, o)) covered++;
+      else if(allyCover.some(a => moves[a].has(key))) covered++;
+      // 敵の利きがdanger
+      if(attackedBy[key]){
+        for(const eo of attackedBy[key]){ if(isEnemy(eo, o)){ danger++; break; } }
+      }
+    }
+    const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
+    kingSafety[o] = safety - danger * AI_KING_SAFETY_DANGER;
+  }
+
+  return {mobility, kingSafety};
+}
+
 function calcEntryBonus(b, o){
   const [kr,kc] = findKingOn(b, o);
   if(kr<0) return 0;
@@ -1209,7 +1294,9 @@ function evalStatic(b, h, elim, vp){
   // ── 共闘モード──
   const humanIsElim = elim[humanPlayer];
 
-  const {mobility, kingSafety} = calcAllStats(b); // 一括計算
+  const {mobility, kingSafety} = humanIsElim
+    ? calcAllStats(b)                          // 人間脱落後はCPU同士の三つ巴なので通常計算
+    : calcCollusionStats(b, humanPlayer);      // 共闘中はCPU連合 vs 人間で計算
   if(humanIsElim){
     const c1=cpus[0], c2=cpus[1];
     let score = pieceScore[c1] - pieceScore[c2];
