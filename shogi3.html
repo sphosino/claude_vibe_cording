@@ -1050,7 +1050,7 @@ function calcAllStats(b){
     rawMoves(b, r, c).forEach(([dr,dc])=>{
       if(hanging) return;
       const enemy = b[dr]?.[dc];
-      if(enemy && enemy.o !== o){
+      if(enemy && enemy.o !== o && enemy.p !== 'OU'){
         const enemyVal = PV[enemy.p] || 0;
         const ratio = Math.min(1.0, enemyVal / (myVal + 1));
         mobility[o] += enemyVal * ratio * AI_THREAT_SCALE;
@@ -1296,7 +1296,7 @@ function quickMoveScore(bd, mv, owner) {
     let threatBonus = 0;
     dests.forEach(([dr, dc]) => {
       const enemy = bd[dr]?.[dc];
-      if(enemy && enemy.o !== (owner ?? -1)){
+      if(enemy && enemy.o !== (owner ?? -1) && enemy.p !== 'OU'){
         const myVal = PV[mv.piece] || 0;
         const enemyVal = PV[enemy.p] || 0;
         const ratio = Math.min(1.0, enemyVal / (myVal + 1));
