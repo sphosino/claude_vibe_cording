@@ -276,12 +276,15 @@ let AI_MOVE_CANDIDATES_DEEP = DIFFICULTY_LEVELS.normal.candsDeep;
 let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
-const AI_MOBILITY_SCALE      = 10;   // モビリティ1マスあたりの点数スケール
-const AI_THREAT_SCALE        = 0.005; // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値がモビリティに加算）
-const AI_ENTRY_MULT          = 214;   // 入玉距離ボーナス係数（2段目≒1500点、3段目≒600点）
+const AI_MOBILITY_SCALE      = 3;    // モビリティ1マスあたりの点数（evalStatic・quickMoveScore・openRoad共通）
+const AI_QMS_CAPTURE_MULT    = 10;   // quickMoveScore: 駒取り手の優先倍率
+const AI_QMS_HAND_COST       = 0.04; // quickMoveScore: 持ち駒を打つコスト率（駒価値×この値）
+const AI_THREAT_SCALE        = 0.2;  // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値がモビリティに加算）
+const AI_ENTRY_MULT          = 250;   // 入玉距離ボーナス係数（2段目≒1750点、3段目≒750点）
 const AI_ENTRY_BLOCK_RATE    = 0.15;  // 入玉阻止ボーナス係数（最大≒129点）
 const AI_KING_SAFETY_MULT      = 1000; // 王の安全度スコア係数（飛車1枚分程度の影響力）
 const AI_KING_SAFETY_DENOM_EXP = 0.9;  // 安全度分母の指数（広い場所ほど満点が高い）
+const AI_KING_SAFETY_DANGER    = 0.15; // 王周囲への敵利きペナルティ係数
 const AI_COALITION_THRESHOLD   = 1500; // 連合発動の独走スコア差しきい値
 const AI_COALITION_MULT        = 0.5;  // 連合時の上位プレイヤーへの重み増加量
 const AI_FINISH_MULT           = 0.4;  // 1位が弱い敵を狙う際の重み増加量
@@ -1077,7 +1080,7 @@ function calcAllStats(b){
       }
     }
     const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
-    kingSafety[o] = safety - danger * 0.15;
+    kingSafety[o] = safety - danger * AI_KING_SAFETY_DANGER;
   }
 
   return {mobility, kingSafety};
@@ -1289,8 +1292,8 @@ function quickMoveScore(bd, mv, owner) {
     tempBd[mv.tr] = tempBd[mv.tr].slice();
     tempBd[mv.tr][mv.tc] = {p: mv.piece, o: owner ?? -1, pr: false};
     const dests = rawMoves(tempBd, mv.tr, mv.tc);
-    // 利きマス数 × 3（移動と同スケール）
-    const mobilityGain = dests.length * 3;
+    // 利きマス数（移動と同スケール）
+    const mobilityGain = dests.length * AI_MOBILITY_SCALE;
     // 敵駒への脅威ボーナス（移動と同じ式）
     let threatBonus = 0;
     dests.forEach(([dr, dc]) => {
@@ -1302,11 +1305,11 @@ function quickMoveScore(bd, mv, owner) {
         threatBonus += enemyVal * ratio * AI_THREAT_SCALE;
       }
     });
-    const handCost = (PV[mv.piece] || 0) * 0.04; // 持ち駒コスト（飛車=36、歩=4）mobilityと同スケール
+    const handCost = (PV[mv.piece] || 0) * AI_QMS_HAND_COST;
     return mobilityGain + threatBonus - handCost;
   }
   const target = bd[mv.tr][mv.tc];
-  if(target) return PV[target.p] * 10 + (mv.pro ? 50 : 0); // 取る手を優先
+  if(target) return PV[target.p] * AI_QMS_CAPTURE_MULT + (mv.pro ? 50 : 0); // 取る手を優先
 
   // 移動前後の利きマス差分（その駒1枚のみ・軽量）
   const piece = bd[mv.fr][mv.fc];
@@ -1317,7 +1320,7 @@ function quickMoveScore(bd, mv, owner) {
   tempBd[mv.tr][mv.tc] = {p: piece.p, o: piece.o, pr: mv.pro || piece.pr};
   tempBd[mv.fr][mv.fc] = null;
   const after = rawMoves(tempBd, mv.tr, mv.tc);
-  const mobilityDelta = (after.length - before) * 3; // 1マスあたり3点
+  const mobilityDelta = (after.length - before) * AI_MOBILITY_SCALE;
 
   // 角道・飛車道を開けるボーナス
   // 元の位置(fr,fc)から8方向に味方の飛・角がいるか探し、
@@ -1351,7 +1354,7 @@ function quickMoveScore(bd, mv, owner) {
             opened++;
             fr2+=fdr; fc2+=fdc;
           }
-          openRoadBonus += opened * 5; // 1マス開くごとに5点
+          openRoadBonus += opened * AI_MOBILITY_SCALE;
         }
       }
       break; // 何か駒があったら探索終了
@@ -1422,7 +1425,13 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
     let moves = allMovesOn(bd, hd, turnPlayer, elim);
     moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
     // 深いノードほど候補を絞る（root側は多く、葉側は少なく）
-    moves = moves.slice(0, candsForDepth(depth));
+    const slicedC = moves.slice(0, candsForDepth(depth));
+    const entryMvsC = moves.filter(mv =>
+      !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
+      ((turnPlayer===0&&mv.tr===0)||(turnPlayer===1&&mv.tr===8)||(turnPlayer===2&&mv.tc===0))
+    );
+    const slicedSetC = new Set(slicedC.map(m=>m.fr+','+m.fc+','+m.tr+','+m.tc));
+    moves = slicedC.concat(entryMvsC.filter(m=>!slicedSetC.has(m.fr+','+m.fc+','+m.tr+','+m.tc)));
 
     if(isHuman){
       let best = Infinity;
@@ -1430,9 +1439,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
         const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
         if(undo.tryWin){
           const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
-          undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
-          if(safe) return AI_SCORE_TRYLOSE;
-          continue;
+          if(safe){ undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); return AI_SCORE_TRYLOSE; }
+          // 利きあり入玉→通常評価へ
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI);
@@ -1447,9 +1455,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
         const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
         if(undo.tryWin){
           const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
-          undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
-          if(safe) return AI_SCORE_TRYWIN;
-          continue;
+          if(safe){ undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); return AI_SCORE_TRYWIN; }
+          // 利きあり入玉→通常評価へ
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI);
@@ -1464,20 +1471,27 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
   // ── 三つ巴：max^n（スコア配列）──
   let moves = allMovesOn(bd, hd, turnPlayer, elim);
   moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
-  moves = moves.slice(0, candsForDepth(depth));
+  const sliced = moves.slice(0, candsForDepth(depth));
+  // 入玉手はslice落ち防止で強制追加
+  const entryMvs = moves.filter(mv =>
+    !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
+    ((turnPlayer===0 && mv.tr===0)||(turnPlayer===1 && mv.tr===8)||(turnPlayer===2 && mv.tc===0))
+  );
+  const slicedSet = new Set(sliced.map(m=>m.fr+','+m.fc+','+m.tr+','+m.tc));
+  moves = sliced.concat(entryMvs.filter(m=>!slicedSet.has(m.fr+','+m.fc+','+m.tr+','+m.tc)));
 
   let bestScores = null;
   for(const mv of moves){
     const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
     if(undo.tryWin){
       const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
-      undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
       if(safe){
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
         const s = [0,0,0];
         [0,1,2].forEach(o => s[o] = o===turnPlayer ? AI_SCORE_TRYWIN : -AI_SCORE_TRYWIN);
         return s;
       }
-      continue;
+      // 利きあり入玉→通常評価へ（スキップしない）
     }
     const nxt = nextAliveOn(elim, turnPlayer);
     const scores = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI);
@@ -1528,36 +1542,39 @@ function aiMove(o,bd,hd,elim){
     const undo = applyMoveInPlace(bd, hd, elim, mv, o);
     const safe = !elim[o] && !kingWouldBeCaptured(bd, o, elim);
     undoMoveInPlace(bd, hd, elim, mv, o, undo);
-    return safe; // 打ち駒も含む（合駒で王手回避可能）
+    return safe;
   });
   const inCheck = kingWouldBeCaptured(bd,o,elim);
-  const candidates = inCheck
-    ? (evasions.length ? evasions : moves) // 王手中は回避手のみ、なければ全手
+
+  // 入玉手（1段目到達）も必ずcandidatesに含める
+  const entryMoves = moves.filter(mv =>
+    !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
+    ((o===0 && mv.tr===0) || (o===1 && mv.tr===8) || (o===2 && mv.tc===0))
+  );
+
+  const baseCands = inCheck
+    ? (evasions.length ? evasions : moves)
     : moves.slice(0, AI_MOVE_CANDIDATES);
+
+  // 入玉手をcandidatesに追加（重複除去）
+  const candSet = new Set(baseCands.map(m => m.fr+','+m.fc+','+m.tr+','+m.tc));
+  const candidates = baseCands.concat(
+    entryMoves.filter(m => !candSet.has(m.fr+','+m.fc+','+m.tr+','+m.tc))
+  );
 
   let best=null, bestScore=-Infinity;
   for(const mv of candidates){
-    if(!mv.drop){
-      const cell=bd[mv.fr]?.[mv.fc];
-      if(cell?.p==='OU'){
-        const [tr,tc]=[mv.tr,mv.tc];
-        if((o===0&&tr===0)||(o===1&&tr===8)||(o===2&&tc===0)){
-          if(!squareAttackedBy(bd,tr,tc,o,elim)) return mv; // 利きがなければ入玉勝ち
-          // 利きがあれば通常評価へ
-        }
-      }
-    }
     const undo = applyMoveInPlace(bd, hd, elim, mv, o);
-    // 王を取れるなら即返す（undoしてから返す）
+    // 王を取れるなら即返す
     if(undo.tryWin){
-      // 入玉の場合は利きチェック、王取りは無条件勝ち
+      // 入玉の場合は移動後の盤面で利きチェック、王取りは無条件勝ち
       if(!undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,o,elim)){
         undoMoveInPlace(bd, hd, elim, mv, o, undo); return mv;
       }
-      // 入玉マスに利きあり→通常評価へ（undoはせずそのまま）
+      // 入玉マスに利きあり→通常評価へ
     }
-    // 王手放置・自爆手は除外
-    if(!elim[o] && kingWouldBeCaptured(bd, o, elim)){ undoMoveInPlace(bd, hd, elim, mv, o, undo); continue; }
+    // 王手放置・自爆手は除外（ただし入玉手は除外しない）
+    if(!undo.entryWin && !elim[o] && kingWouldBeCaptured(bd, o, elim)){ undoMoveInPlace(bd, hd, elim, mv, o, undo); continue; }
     const nxt = nextAliveOn(elim, o);
     const result = minimaxRound(bd, hd, elim, AI_SEARCH_DEPTH, -Infinity, Infinity, nxt, o);
     // max^nは配列、共闘モードはスカラー
