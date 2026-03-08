@@ -306,6 +306,12 @@ let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
 const AI_MOBILITY_SCALE        = 3;       // モビリティ1マスあたりの点数（evalStatic・quickMoveScore・openRoad共通）
+// 同一マスにn枚利いているときのスコア。i番目の重み = DECAY^(i-1)（1枚目=1, 2枚目=DECAY, 3枚目=DECAY^2...）
+const AI_MOBILITY_MULTI_DECAY  = 0.7;     // 減衰率（0.7→2枚目0.7, 3枚目0.49, 4枚目0.34...）
+function mobilityScoreForCount(n){
+  let s=0; for(let i=1;i<=n;i++) s+=Math.pow(AI_MOBILITY_MULTI_DECAY, i-1);
+  return s;
+}
 const AI_QMS_CAPTURE_MULT      = 10;      // quickMoveScore: 駒取り手の優先倍率
 const AI_QMS_HAND_COST         = 0.04;   // quickMoveScore: 持ち駒を打つコスト率（駒価値×この値）
 const AI_THREAT_SCALE          = 0.2;    // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値）
@@ -1070,111 +1076,27 @@ function candsForDepth(depth){
   return Math.round(AI_MOVE_CANDIDATES_DEEP + t * (AI_MOVE_CANDIDATES - AI_MOVE_CANDIDATES_DEEP));
 }
 
-// ── AI評価ヘルパー（全プレイヤー一括計算）──
-// 盤面を1回スキャンして全プレイヤーのmobility・kingSafetyを同時計算
-function calcAllStats(b){
-  // 各プレイヤーの利きセットを一括収集
-  const moves = [{}, {}, {}]; // moves[o] = Set of "r,c"
-  const attackedBy = {}; // attackedBy["r,c"] = Set of owners
-  const hangingSet = [{}, {}, {}]; // hangingSet[o]["r,c"] = true
-
-  for(let o=0;o<3;o++) moves[o] = new Set();
-
-  // 全駒の利きを1回のスキャンで収集
+// ── AI評価ヘルパー（共通処理）──
+// 全駒の利きを一括収集 → {controlCount, attackedBy}
+function collectControlAndAttackedBy(b){
+  const controlCount = [{}, {}, {}];
+  const attackedBy = {};
+  for(let o=0;o<3;o++) controlCount[o] = {};
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
     if(!cell) continue;
-    const dests = rawMoves(b, r, c);
-    dests.forEach(([dr,dc])=>{
-      moves[cell.o].add(dr+','+dc);
+    rawMoves(b, r, c).forEach(([dr,dc])=>{
       const key = dr+','+dc;
+      controlCount[cell.o][key] = (controlCount[cell.o][key] || 0) + 1;
       if(!attackedBy[key]) attackedBy[key] = new Set();
       attackedBy[key].add(cell.o);
     });
   }
-
-  // ハンギング判定：自駒が敵の利きに入っているか
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell = b[r][c];
-    if(!cell) continue;
-    const key = r+','+c;
-    if(attackedBy[key]){
-      for(const eo of attackedBy[key]){
-        if(eo !== cell.o) { hangingSet[cell.o][key] = true; break; }
-      }
-    }
-  }
-
-  // mobility計算（脅威ボーナス込み）
-  const mobility = [0, 0, 0];
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell = b[r][c];
-    if(!cell) continue;
-    const o = cell.o;
-    const hanging = !!hangingSet[o][r+','+c];
-    const myVal = PV[cell.p] || 0;
-    rawMoves(b, r, c).forEach(([dr,dc])=>{
-      if(hanging) return;
-      const enemy = b[dr]?.[dc];
-      if(enemy && enemy.o !== o && enemy.p !== 'OU'){
-        const enemyVal = PV[enemy.p] || 0;
-        const ratio = Math.min(1.0, enemyVal / (myVal + 1));
-        mobility[o] += enemyVal * ratio * AI_THREAT_SCALE;
-      }
-    });
-  }
-  for(let o=0;o<3;o++) mobility[o] += moves[o].size;
-
-  // kingSafety計算
-  const kingSafety = [0, 0, 0];
-  for(let o=0;o<3;o++){
-    const [kr,kc] = findKingOn(b, o);
-    if(kr<0) continue;
-    let covered=0, total=0, danger=0;
-    for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
-      const nr=kr+dr, nc=kc+dc;
-      if(nr<0||nr>=9||nc<0||nc>=9) continue;
-      total++;
-      const cell = b[nr][nc];
-      const key = nr+','+nc;
-      if((cell?.o===o) || moves[o].has(key)) covered++;
-      // 敵の利きが届いているか
-      if(attackedBy[key]){
-        for(const eo of attackedBy[key]){ if(eo!==o){ danger++; break; } }
-      }
-    }
-    const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
-    kingSafety[o] = safety - danger * AI_KING_SAFETY_DANGER;
-  }
-
-  return {mobility, kingSafety};
+  return {controlCount, attackedBy};
 }
 
-// ── 共闘モード用評価ヘルパー ──
-// CPU同士を「味方」として扱い、CPU連合 vs 人間の視点で計算
-// mobilityHu: 人間の利きスコア
-// mobilityCpu: CPU連合の合計利きスコア
-// kingSafety: 各プレイヤーの王安全度（人間の周囲はCPU全体の利きが敵）
-function calcCollusionStats(b, hu){
-  const cpus = [0,1,2].filter(o => o !== hu);
-  const moves = [{}, {}, {}];
-  const attackedBy = {};
-  for(let o=0;o<3;o++) moves[o] = new Set();
-
-  // 全駒の利きを一括収集
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell = b[r][c];
-    if(!cell) continue;
-    rawMoves(b, r, c).forEach(([dr,dc])=>{
-      moves[cell.o].add(dr+','+dc);
-      const key = dr+','+dc;
-      if(!attackedBy[key]) attackedBy[key] = new Set();
-      attackedBy[key].add(cell.o);
-    });
-  }
-
-  // ハンギング判定：「敵」= 異陣営（CPU同士は味方なのでハンギングにならない）
-  const isEnemy = (a, b) => (a === hu) !== (b === hu); // 陣営が違うか
+// ハンギング判定：isEnemy(a,b)で敵かどうか判定
+function buildHangingSet(b, attackedBy, isEnemy){
   const hangingSet = [{}, {}, {}];
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
@@ -1186,9 +1108,11 @@ function calcCollusionStats(b, hu){
       }
     }
   }
+  return hangingSet;
+}
 
-  // mobility計算（脅威ボーナス込み・陣営単位）
-  const mobility = [0, 0, 0];
+// mobility計算：脅威ボーナス + 利きマス（減衰重み込み）
+function addMobilityScores(b, mobility, controlCount, hangingSet, isEnemy){
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
     if(!cell) continue;
@@ -1205,9 +1129,14 @@ function calcCollusionStats(b, hu){
       }
     });
   }
-  for(let o=0;o<3;o++) mobility[o] += moves[o].size;
+  for(let o=0;o<3;o++){
+    for(const key of Object.keys(controlCount[o]))
+      mobility[o] += mobilityScoreForCount(controlCount[o][key]);
+  }
+}
 
-  // kingSafety計算（味方陣営の利きでcovered、敵陣営の利きがdanger）
+// kingSafety計算：isCovered(o, key, cell)でマスがカバーされているか、isEnemyで敵利き判定
+function computeKingSafety(b, controlCount, attackedBy, isCovered, isEnemy){
   const kingSafety = [0, 0, 0];
   for(let o=0;o<3;o++){
     const [kr,kc] = findKingOn(b, o);
@@ -1217,13 +1146,9 @@ function calcCollusionStats(b, hu){
       const nr=kr+dr, nc=kc+dc;
       if(nr<0||nr>=9||nc<0||nc>=9) continue;
       total++;
-      const cell = b[nr][nc];
+      const cell = b[nr]?.[nc];
       const key = nr+','+nc;
-      // 味方の駒か利きでカバー
-      const allyCover = [o, ...( o===hu ? [] : cpus )];
-      if(cell && !isEnemy(cell.o, o)) covered++;
-      else if(allyCover.some(a => moves[a].has(key))) covered++;
-      // 敵の利きがdanger
+      if(isCovered(o, key, cell, controlCount)) covered++;
       if(attackedBy[key]){
         for(const eo of attackedBy[key]){ if(isEnemy(eo, o)){ danger++; break; } }
       }
@@ -1231,7 +1156,36 @@ function calcCollusionStats(b, hu){
     const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
     kingSafety[o] = safety - danger * AI_KING_SAFETY_DANGER;
   }
+  return kingSafety;
+}
 
+// ── 盤面を1回スキャンして全プレイヤーのmobility・kingSafetyを同時計算 ──
+function calcAllStats(b){
+  const {controlCount, attackedBy} = collectControlAndAttackedBy(b);
+  const isEnemy = (a, b) => a !== b;
+  const hangingSet = buildHangingSet(b, attackedBy, isEnemy);
+  const mobility = [0, 0, 0];
+  addMobilityScores(b, mobility, controlCount, hangingSet, isEnemy);
+  const isCovered = (o, key, cell, cc) =>
+    (cell?.o === o) || (cc[o][key] || 0) > 0;
+  const kingSafety = computeKingSafety(b, controlCount, attackedBy, isCovered, isEnemy);
+  return {mobility, kingSafety};
+}
+
+// ── 共闘モード用：CPU連合 vs 人間の視点で計算 ──
+function calcCollusionStats(b, hu){
+  const cpus = [0,1,2].filter(o => o !== hu);
+  const {controlCount, attackedBy} = collectControlAndAttackedBy(b);
+  const isEnemy = (a, b) => (a === hu) !== (b === hu);
+  const hangingSet = buildHangingSet(b, attackedBy, isEnemy);
+  const mobility = [0, 0, 0];
+  addMobilityScores(b, mobility, controlCount, hangingSet, isEnemy);
+  const isCovered = (o, key, cell, cc) => {
+    if(cell && !isEnemy(cell.o, o)) return true;
+    const allies = o === hu ? [o] : [o, ...cpus];
+    return allies.some(a => (cc[a][key] || 0) > 0);
+  };
+  const kingSafety = computeKingSafety(b, controlCount, attackedBy, isCovered, isEnemy);
   return {mobility, kingSafety};
 }
 
