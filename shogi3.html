@@ -273,13 +273,6 @@ let AI_SEARCH_DEPTH    = DIFFICULTY_LEVELS.normal.depth;
 let AI_MOVE_CANDIDATES = DIFFICULTY_LEVELS.normal.cands;
 let AI_MOVE_CANDIDATES_DEEP = DIFFICULTY_LEVELS.normal.candsDeep;
 
-// 残り深さに応じた候補数を線形補完
-// depth=AI_SEARCH_DEPTH(root)→cands、depth=1(最深)→candsDeep
-function candsForDepth(depth){
-  if(AI_SEARCH_DEPTH <= 1) return AI_MOVE_CANDIDATES;
-  const t = (depth - 1) / (AI_SEARCH_DEPTH - 1); // 0(最深)〜1(root)
-  return Math.round(AI_MOVE_CANDIDATES_DEEP + t * (AI_MOVE_CANDIDATES - AI_MOVE_CANDIDATES_DEEP));
-}
 let AI_NOISE           = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT   = DIFFICULTY_LEVELS.normal.mobilityMult; // 難易度別モビリティ係数
 
@@ -297,6 +290,7 @@ const AI_SCORE_TRYWIN    = 1800000; // 勝利局面スコア
 const AI_SCORE_TRYLOSE   = -1500000;// 敗北局面スコア
 const AI_DELAY_MS        = 400;     // AI着手後の表示待機(ms)
 const AI_SKIP_DELAY_MS   = 800;     // スキップ時の待機(ms)
+let evalStaticCount = 0;            // パフォーマンス計測用
 const PV  ={FU:100,KY:300,KE:350,GIN:400,KIN:500,KAKU:800,HI:900,OU:10000000};
 const PVP ={FU:400,KY:200,KE:150,GIN:100,KAKU:500,HI:450};
 const PC  ={FU:'歩',KY:'香',KE:'桂',GIN:'銀',KIN:'金',HI:'飛',KAKU:'角',OU:'玉'};
@@ -308,17 +302,18 @@ const DRAW_ANGLE=[0, Math.PI, -Math.PI/2]; // piece facing direction per owner
 
 let board, hand, turn, gover, winner;
 // 自己対局モード
+// ── 自己対局統計 ──
 let selfPlayMode = false;
-let selfPlayWins = [0, 0, 0];
-let selfPlayTryWins = [0, 0, 0];
-let selfPlayTryWinsBy = [0, 0, 0]; // 入玉時の残り人数別（index=残り人数-1）
-let selfPlayTryPiecesTotal = 0; // 入玉時の総駒数の累計
-let selfPlayTryPiecesCount = 0; // 入玉回数（平均計算用）
-let selfPlayDraws = 0;
-let selfPlayLimitWins = [0, 0, 0]; // 500手制限勝ち内訳
+let selfPlayRunning = false;
 let selfPlayGames = 0;
 let selfPlayTotalMoves = 0;
-let selfPlayRunning = false;
+let selfPlayDraws = 0;
+let selfPlayWins       = [0, 0, 0]; // 勝利数
+let selfPlayLimitWins  = [0, 0, 0]; // 500手制限勝ち
+let selfPlayTryWins    = [0, 0, 0]; // 入玉勝ち
+let selfPlayTryWinsBy  = [0, 0, 0]; // 入玉時残り人数別（index=残り人数-1）
+let selfPlayTryPiecesTotal = 0;     // 入玉時総駒数累計
+let selfPlayTryPiecesCount = 0;     // 入玉回数
 let winType = 'normal';
 let moveCount = 0;
 const MAX_MOVES = 500;
@@ -327,7 +322,7 @@ let eliminated;
 let viewPlayer=0; // 0=P0視点, 1=P1視点, 2=P2視点
 let humanPlayer=0; // 人間が操作するプレイヤー
 let humanEliminated=false; // 人間が脱落したらCPU対CPU
-let cpuCollusion=true;    // CPU共闘モード（falseで三つ巴の自由対局）
+let cpuCollusion=false;   // CPU共闘モード（falseで三つ巴の自由対局）
 let gameGen=0;
 let kifu=[];
 
@@ -345,8 +340,6 @@ if(!CanvasRenderingContext2D.prototype.roundRect){
 
 // ── ユーティリティ ──
 function inB(r,c){return r>=0&&r<9&&c>=0&&c<9;}
-
-let evalStaticCount = 0; // デバッグ用：evalStatic呼び出し回数
 
 
 // 各プレイヤーの前進方向に合わせて差分を回転
@@ -648,6 +641,8 @@ function countPieces(o){
 // 追加条件①：被取得者の玉が中央（5段目/5列目）以上に進んでいる場合
 // 追加条件②：成り駒を取った場合は、条件なしで手駒にできる
 function canKeep(attackerO, victimO, victimPiece){
+  // 誰かが脱落済みなら無条件取得
+  if (eliminated.some(e=>e)) return true;
   // 成り駒（裏返っている駒）なら無条件でOK
   if (victimPiece && victimPiece.pr) return true;
 
@@ -664,7 +659,6 @@ function canKeep(attackerO, victimO, victimPiece){
   // 駒数差による判定
   return (countPieces(victimO) - countPieces(attackerO) >= 3);
 }
-
 
 
 // ── 合法手生成 ──
@@ -880,103 +874,6 @@ function applyMove(mv,o){
 
 // ── AI ──
 
-function simApply(bd, hd, elim, mv, o){
-
-  // --- 深いコピー ---
-  const b = bd.map(r => r.map(c => c ? {...c} : null));
-  const h = [hd[0].slice(), hd[1].slice(), hd[2].slice()];
-
-  // =====================
-  // ドロップ
-  // =====================
-  if(mv.drop){
-    const idx = h[o].indexOf(mv.piece);
-    if(idx >= 0) h[o].splice(idx, 1);
-
-    b[mv.tr][mv.tc] = { p: mv.piece, o, pr:false };
-    return { b, h, elim:elim};
-  }
-
-  const cell = b[mv.fr][mv.fc];
-  if(!cell) return { b, h, elim:elim};
-
-  const cap = b[mv.tr][mv.tc];
-
-  // =====================
-  // 王を取った場合
-  // =====================
-  if(cap && cap.p === 'OU'){
-    b[mv.tr][mv.tc] = { p: cell.p, o, pr: mv.pro || cell.pr };
-    b[mv.fr][mv.fc] = null;
-    const newElim = elim.slice();
-    newElim[cap.o] = true;
-
-    return { b, h, elim:newElim, tryWin:true };
-  }
-
-  // =====================
-  // 通常の取得処理（本番と同じ条件）
-  // =====================
-  if(cap){
-
-    // 脱落プレイヤーの駒は無条件取得
-    if(elim[cap.o]){
-      h[o].push(cap.p);
-    }
-    // 成り駒は無条件保持
-    else if(cap.pr){
-      h[o].push(cap.p);
-    }
-    else {
-
-      // 玉位置条件判定
-      const [kr, kc] = findKingOn(b, cap.o);
-      let isBeyondCenter = false;
-
-      if(kr !== -1){
-        if(cap.o === 0) isBeyondCenter = (kr <= 4);
-        else if(cap.o === 1) isBeyondCenter = (kr >= 4);
-        else if(cap.o === 2) isBeyondCenter = (kc <= 4);
-      }
-
-      if(isBeyondCenter){
-        h[o].push(cap.p);
-      }
-      else {
-        // 駒数差条件
-        const diff =
-          countPiecesOn(b,h,cap.o) - countPiecesOn(b,h,o);
-
-        if(diff >= 3){
-          h[o].push(cap.p);
-        }
-      }
-    }
-  }
-
-  // =====================
-  // 駒移動
-  // =====================
-  b[mv.tr][mv.tc] = {
-    p: cell.p,
-    o,
-    pr: mv.pro || cell.pr
-  };
-
-  b[mv.fr][mv.fc] = null;
-
-  // トライ判定（利きがないマスのみ勝利）
-  if(cell.p === 'OU'){
-    if((o===0&&mv.tr<=0)||(o===1&&mv.tr>=8)||(o===2&&mv.tc<=0)){
-      if(!squareAttackedBy(b, mv.tr, mv.tc, o, elim))
-        return { b, h, elim:elim, tryWin:true };
-      // 利きあり→入玉不可、通常の手として続行
-    }
-  }
-
-  return { b, h, elim:elim};
-}
-
 
 // ── applyMoveInPlace / undoMoveInPlace ──
 // minimaxの内部ノードでボードコピーの代わりに使う
@@ -1010,8 +907,8 @@ function applyMoveInPlace(bd, hd, elim, mv, o) {
   // 通常の取得：持ち駒に加えるか判定（simApplyと同じ条件）
   if (toCell) {
     let addToHand = false;
-    if (elim[toCell.o]) {
-      addToHand = true; // 脱落プレイヤーの駒は無条件取得
+    if (elim.some(e=>e)) {
+      addToHand = true; // 誰かが脱落済みなら無条件取得
     } else if (toCell.pr) {
       addToHand = true;
     } else {
@@ -1091,13 +988,20 @@ function pieceScores(b, h, owners) {
   owners.forEach(o => scoresMap[o] = 0);
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
-    if(cell && owners.includes(cell.o))
+    if(cell && owners.includes(cell.o) && cell.p !== 'OU') // 王は除外
       scoresMap[cell.o] += (PV[cell.p]||0) + (cell.pr ? (PVP[cell.p]||0) : 0);
   }
   owners.forEach(o => {
     if(h[o]) h[o].forEach(p => scoresMap[o] += (PV[p]||0) * AI_HAND_BONUS_RATE);
   });
   return owners.map(o => scoresMap[o]);
+}
+
+// 残り深さに応じた候補数を線形補完（root=cands、最深=candsDeep）
+function candsForDepth(depth){
+  if(AI_SEARCH_DEPTH <= 1) return AI_MOVE_CANDIDATES;
+  const t = (depth - 1) / (AI_SEARCH_DEPTH - 1);
+  return Math.round(AI_MOVE_CANDIDATES_DEEP + t * (AI_MOVE_CANDIDATES - AI_MOVE_CANDIDATES_DEEP));
 }
 
 // ── AI評価ヘルパー（全プレイヤー一括計算）──
@@ -1205,7 +1109,7 @@ function evalStaticMaxN(b, h, elim){
   const {mobility, kingSafety} = calcAllStats(b); // 一括計算
   const raw = {};
   alive.forEach(o=>{
-    raw[o] = pieceScore[o] - (PV['OU'] || 0)
+    raw[o] = pieceScore[o]
            + mobility[o]   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
            + kingSafety[o] * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
            + calcEntryBonus(b,o);
@@ -1262,7 +1166,7 @@ function evalStatic(b, h, elim, vp){
     const {mobility, kingSafety} = calcAllStats(b); // 一括計算
     const raw = {};
     alive.forEach(o=>{
-      const ps = pieceScore[o] - (PV['OU'] || 0); // 王を除いた駒スコア
+      const ps = pieceScore[o]; // pieceScoresから王は除外済み
       raw[o] = ps
              + mobility[o]   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
              + kingSafety[o] * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
@@ -1520,6 +1424,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
     moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
     // 深いノードほど候補を絞る（root側は多く、葉側は少なく）
     moves = moves.slice(0, candsForDepth(depth));
+
     if(isHuman){
       let best = Infinity;
       for(const mv of moves){
@@ -1958,7 +1863,6 @@ function drawAllPieces(){
 }
 
 
-
 function drawHandRow(o, side){
   // side: 'bottom'|'top'|'right'|'left'
   const uh=uniqueHand(o); if(!uh.length) return;
@@ -2146,7 +2050,7 @@ window.addEventListener('DOMContentLoaded', () => {
   window.addEventListener('resize', fitCanvas);
   fitCanvas();
   setDifficulty(currentDifficulty);
-  setCpuCollusion(true);
+  setCpuCollusion(false);
   setHumanPlayer(0);
 });
 </script>
