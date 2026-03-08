@@ -212,18 +212,21 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
           <div style="color:#4488ff">&#x1F535;青将</div>
           <div><span id="sp-w0" style="font-size:22px;font-weight:bold;color:#4488ff">0</span><span style="color:#666;font-size:11px;">勝</span></div>
           <div style="color:#4488ff88;font-size:11px;">入玉 <span id="sp-t0">0</span></div>
+          <div style="color:#4488ff66;font-size:11px;">制限 <span id="sp-l0">0</span></div>
           <div id="sp-p0" style="color:#4488ffaa;font-size:11px;">0%</div>
         </div>
         <div style="min-width:80px">
           <div style="color:#ff4433">&#x1F534;赤将</div>
           <div><span id="sp-w1" style="font-size:22px;font-weight:bold;color:#ff4433">0</span><span style="color:#666;font-size:11px;">勝</span></div>
           <div style="color:#ff443388;font-size:11px;">入玉 <span id="sp-t1">0</span></div>
+          <div style="color:#ff443366;font-size:11px;">制限 <span id="sp-l1">0</span></div>
           <div id="sp-p1" style="color:#ff4433aa;font-size:11px;">0%</div>
         </div>
         <div style="min-width:80px">
           <div style="color:#33bb55">&#x1F7E2;緑将</div>
           <div><span id="sp-w2" style="font-size:22px;font-weight:bold;color:#33bb55">0</span><span style="color:#666;font-size:11px;">勝</span></div>
           <div style="color:#33bb5588;font-size:11px;">入玉 <span id="sp-t2">0</span></div>
+          <div style="color:#33bb5566;font-size:11px;">制限 <span id="sp-l2">0</span></div>
           <div id="sp-p2" style="color:#33bb55aa;font-size:11px;">0%</div>
         </div>
         <div style="min-width:80px">
@@ -298,6 +301,7 @@ let selfPlayMode = false;
 let selfPlayWins = [0, 0, 0];
 let selfPlayTryWins = [0, 0, 0];
 let selfPlayDraws = 0;
+let selfPlayLimitWins = [0, 0, 0]; // 500手制限勝ち内訳
 let selfPlayGames = 0;
 let selfPlayTotalMoves = 0;
 let selfPlayRunning = false;
@@ -474,6 +478,7 @@ function toggleSelfPlay(){
     selfPlayWins=[0,0,0];
     selfPlayTryWins=[0,0,0];
     selfPlayDraws=0;
+    selfPlayLimitWins=[0,0,0];
     selfPlayGames=0;
     selfPlayTotalMoves=0;
     document.getElementById('sp-panel').style.display='block';
@@ -497,6 +502,7 @@ function updateSpStats(){
   [0,1,2].forEach(i=>{
     document.getElementById('sp-w'+i).textContent=selfPlayWins[i];
     document.getElementById('sp-t'+i).textContent=selfPlayTryWins[i];
+    document.getElementById('sp-l'+i).textContent=selfPlayLimitWins[i];
     document.getElementById('sp-p'+i).textContent=total>0?Math.round(selfPlayWins[i]/total*100)+'%':'0%';
   });
   document.getElementById('sp-wd').textContent=selfPlayDraws;
@@ -523,6 +529,7 @@ function watchSelfPlay(gen){
     if(winner>=0 && winner<=2){
       selfPlayWins[winner]++;
       if(winType==='trywin') selfPlayTryWins[winner]++;
+      if(winType==='limit') selfPlayLimitWins[winner]++;
     } else {
       selfPlayDraws++;
     }
@@ -1118,22 +1125,33 @@ function calcMobility(b, o){
 function calcKingSafety(b, o){
   const [kr,kc] = findKingOn(b, o);
   if(kr<0) return 0;
-  // 王を含む3x3範囲の盤内マスに、自分の駒がいるか利きが届いているかをカバー率で評価
+
+  // 自分の駒の利きを収集（王以外）
   const myMoves = new Set();
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     if(b[r][c]?.o!==o || b[r][c]?.p==='OU') continue;
     rawMoves(b,r,c).forEach(([dr,dc])=>myMoves.add(dr+','+dc));
   }
-  let covered = 0, total = 0;
+
+  // 敵全員の利きを収集
+  const enemyMoves = new Set();
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    if(!b[r][c] || b[r][c].o===o) continue;
+    rawMoves(b,r,c).forEach(([dr,dc])=>enemyMoves.add(dr+','+dc));
+  }
+
+  let covered = 0, total = 0, danger = 0;
   for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
     const nr=kr+dr, nc=kc+dc;
-    if(nr<0||nr>=9||nc<0||nc>=9) continue; // 盤外は分母にも含めない
+    if(nr<0||nr>=9||nc<0||nc>=9) continue;
     total++;
     const cell = b[nr][nc];
-    // 自分の駒がいる、または利きが届いている（王自身のマスも含む）
     if((cell?.o===o) || myMoves.has(nr+','+nc)) covered++;
+    if(enemyMoves.has(nr+','+nc)) danger++;
   }
-  return total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0; // 広いほど満点が高くなるカバー率
+
+  const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
+  return safety - danger * 0.15; // 敵の利きが届くマスごとに減点
 }
 
 function calcEntryBonus(b, o){
@@ -1370,8 +1388,8 @@ function quickMoveScore(bd, mv, owner) {
   tempBd[mv.fr] = tempBd[mv.fr].slice();
   tempBd[mv.tr][mv.tc] = {p: piece.p, o: piece.o, pr: mv.pro || piece.pr};
   tempBd[mv.fr][mv.fc] = null;
-  const after = rawMoves(tempBd, mv.tr, mv.tc).length;
-  const mobilityDelta = (after - before) * 3; // 1マスあたり3点
+  const after = rawMoves(tempBd, mv.tr, mv.tc);
+  const mobilityDelta = (after.length - before) * 3; // 1マスあたり3点
 
   // 角道・飛車道を開けるボーナス
   // 元の位置(fr,fc)から8方向に味方の飛・角がいるか探し、
@@ -1412,7 +1430,33 @@ function quickMoveScore(bd, mv, owner) {
     }
   }
 
-  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus;
+  const afterMoves = mv.drop ? rawMoves(tempBd, mv.tr, mv.tc) : after;
+  // 入玉阻止ボーナス：敵の王が中段を越えていたら進行路上への利きに加点
+  let entryBlockBonus = 0;
+  for(let eo=0; eo<3; eo++){
+    if(eo === owner) continue;
+    const [ekr, ekc] = findKingOn(bd, eo);
+    if(ekr < 0) continue;
+    // 敵王が中段を越えて進軍中か
+    const advancing =
+      (eo===0 && ekr <= 4) ||
+      (eo===1 && ekr >= 4) ||
+      (eo===2 && ekc <= 4);
+    if(!advancing) continue;
+    // 王の進行路上のマスを列挙（王の前方全マス）
+    const pathSquares = new Set();
+    if(eo===0){ for(let r=0; r<ekr; r++) pathSquares.add(r+','+ekc); }
+    else if(eo===1){ for(let r=ekr+1; r<9; r++) pathSquares.add(r+','+ekc); }
+    else { for(let c=0; c<ekc; c++) pathSquares.add(ekr+','+c); }
+    // 移動後の利きが進行路に届いているマス数をカウント
+    const covered = afterMoves.filter(([r,c]) => pathSquares.has(r+','+c)).length;
+    if(covered > 0){
+      const dist = eo===0 ? ekr : eo===1 ? 8-ekr : ekc;
+      entryBlockBonus += covered * Math.max(1, 5-dist) * AI_ENTRY_MULT * 0.03;
+    }
+  }
+
+  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus + entryBlockBonus;
 }
 
 
