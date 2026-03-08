@@ -309,7 +309,7 @@ const AI_MOBILITY_SCALE      = 3;    // モビリティ1マスあたりの点数
 const AI_QMS_CAPTURE_MULT    = 10;   // quickMoveScore: 駒取り手の優先倍率
 const AI_QMS_HAND_COST       = 0.04; // quickMoveScore: 持ち駒を打つコスト率（駒価値×この値）
 const AI_THREAT_SCALE        = 0.2;  // 利きが敵駒に当たったときの脅威ボーナス係数（駒価値×この値がモビリティに加算）
-const AI_ENTRY_MULT          = 250;   // 入玉距離ボーナス係数（2段目≒1750点、3段目≒750点）
+const AI_ENTRY_MULT          = 120;   // 入玉距離ボーナス係数（4段目〜1段目で加速、最大≒3720点）
 const AI_ENTRY_BLOCK_RATE    = 0.15;  // 入玉阻止ボーナス係数（最大≒129点）
 const AI_KING_SAFETY_MULT      = 1000; // 王の安全度スコア係数（飛車1枚分程度の影響力）
 const AI_KING_SAFETY_DENOM_EXP = 0.9;  // 安全度分母の指数（広い場所ほど満点が高い）
@@ -1237,7 +1237,7 @@ function calcEntryBonus(b, o){
   const [kr,kc] = findKingOn(b, o);
   if(kr<0) return 0;
   const dist = o===0 ? kr : o===1 ? 8-kr : kc;
-  return (Math.pow(2, Math.max(0, 4-dist)) - 1) * AI_ENTRY_MULT;
+  return (Math.pow(2, Math.max(0, 5-dist)) - 1) * AI_ENTRY_MULT;
 }
 
 // max^n用：全プレイヤーのスコアを配列で返す（三つ巴専用）
@@ -1546,7 +1546,14 @@ function quickMoveScore(bd, mv, owner) {
     }
   }
 
-  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus + entryBlockBonus;
+  // 王の前進手：入玉ボーナスの差分を加算
+  let entryDelta = 0;
+  if(piece.p === 'OU'){
+    const before = calcEntryBonus(bd, piece.o);
+    entryDelta = calcEntryBonus(tempBd, piece.o) - before;
+  }
+
+  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus + entryBlockBonus + entryDelta;
 }
 
 
