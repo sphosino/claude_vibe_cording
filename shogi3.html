@@ -176,6 +176,7 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
 
   <div id="game-container">
     <div id="info">先手（あなた）の番です</div>
+    <div id="perf-info" style="font-size:11px;color:#666;min-height:14px;"></div>
     <div id="canvas-wrap"><canvas id="c"></canvas></div>
     <div id="btnRow">
       <button onclick="init()">盤面を初期化</button>
@@ -256,7 +257,7 @@ const CS=56, BX=115, BY=115, CW=760, CH=760;
 let canvas, ctx;
 
 
-// ── AI チューニング定数 ──
+// ── AI定数 ──
 const IS_MOBILE = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
 // 難易度設定テーブル
@@ -1042,122 +1043,99 @@ function findKingOn(b,o){
   return [-1,-1];
 }
 
-function kingEscapesOn(b,o){
-  const [kr,kc]=findKingOn(b,o);
-  if(kr<0) return 0;
-  let n=0;
-  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
-    if(!dr&&!dc) continue;
-    const nr=kr+dr,nc=kc+dc;
-    if(inB(nr,nc)&&b[nr][nc]?.o!==o) n++;
-  }
-  return n;
-}
-
-/**
- * 指定したプレイヤー（リスト）ごとの合計スコアを配列で返す
- * @param {Array} b - 盤面
- * @param {Array} h - 持ち駒
- * @param {Array} owners - プレイヤー番号の配列 (例: [0, 1, 2])
- * @returns {Array} 各プレイヤーのスコアリスト (例: [1500, 1200, 1300])
- */
+// 駒価値合計を各プレイヤー分まとめて返す
 function pieceScores(b, h, owners) {
-  // スコアを格納するオブジェクトを初期化 { プレイヤー番号: スコア }
   const scoresMap = {};
   owners.forEach(o => scoresMap[o] = 0);
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(cell && owners.includes(cell.o))
+      scoresMap[cell.o] += (PV[cell.p]||0) + (cell.pr ? (PVP[cell.p]||0) : 0);
+  }
+  owners.forEach(o => {
+    if(h[o]) h[o].forEach(p => scoresMap[o] += (PV[p]||0) * AI_HAND_BONUS_RATE);
+  });
+  return owners.map(o => scoresMap[o]);
+}
 
-  // 1. 盤上の駒を走査（1回のループで全対象プレイヤー分を計算）
-  for (let r = 0; r < 9; r++) {
-    for (let c = 0; c < 9; c++) {
-      const cell = b[r][c];
-      // 指定されたオーナーの中に含まれているかチェック
-      if (cell && owners.includes(cell.o)) {
-        let v = PV[cell.p] || 0;
-        if (cell.pr && PVP[cell.p]) v += PVP[cell.p];
-        scoresMap[cell.o] += v;
+// ── AI評価ヘルパー（全プレイヤー一括計算）──
+// 盤面を1回スキャンして全プレイヤーのmobility・kingSafetyを同時計算
+function calcAllStats(b){
+  // 各プレイヤーの利きセットを一括収集
+  const moves = [{}, {}, {}]; // moves[o] = Set of "r,c"
+  const attackedBy = {}; // attackedBy["r,c"] = Set of owners
+  const hangingSet = [{}, {}, {}]; // hangingSet[o]["r,c"] = true
+
+  for(let o=0;o<3;o++) moves[o] = new Set();
+
+  // 全駒の利きを1回のスキャンで収集
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(!cell) continue;
+    const dests = rawMoves(b, r, c);
+    dests.forEach(([dr,dc])=>{
+      moves[cell.o].add(dr+','+dc);
+      const key = dr+','+dc;
+      if(!attackedBy[key]) attackedBy[key] = new Set();
+      attackedBy[key].add(cell.o);
+    });
+  }
+
+  // ハンギング判定：自駒が敵の利きに入っているか
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(!cell) continue;
+    const key = r+','+c;
+    if(attackedBy[key]){
+      for(const eo of attackedBy[key]){
+        if(eo !== cell.o) { hangingSet[cell.o][key] = true; break; }
       }
     }
   }
 
-  // 2. 持ち駒の計算
-  owners.forEach(o => {
-    if (h[o]) {
-      h[o].forEach(p => {
-        // 持ち駒は盤上より価値より高い
-        scoresMap[o] += (PV[p] || 0) * AI_HAND_BONUS_RATE;
-      });
-    }
-  });
-
-  // 引数 owners で指定された順番通りの配列にして返す
-return owners.map((o) => { return scoresMap[o];});
-}
-
-// ── AI評価ヘルパー ──
-function isHanging(b, r, c, o){
-  // 自駒(r,c)が敵の利きに入っているかチェック
-  for(let er=0;er<9;er++) for(let ec=0;ec<9;ec++){
-    const cell=b[er][ec];
-    if(!cell||cell.o===o) continue;
-    if(rawMoves(b,er,ec).some(([mr,mc])=>mr===r&&mc===c)) return true;
-  }
-  return false;
-}
-
-function calcMobility(b, o){
-  const seen = new Set();
-  let threatBonus = 0;
+  // mobility計算（脅威ボーナス込み）
+  const mobility = [0, 0, 0];
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    if(b[r][c]?.o!==o) continue;
-    const myPiece = b[r][c];
-    // 自駒がタダ取りされる状況（ハンギング）なら脅威ボーナスを出さない
-    const hanging = isHanging(b, r, c, o);
-    rawMoves(b,r,c).forEach(([dr,dc])=>{
-      seen.add(dr+','+dc);
-      if(hanging) return; // タダ取りされる駒の脅威はカウントしない
+    const cell = b[r][c];
+    if(!cell) continue;
+    const o = cell.o;
+    const hanging = !!hangingSet[o][r+','+c];
+    const myVal = PV[cell.p] || 0;
+    rawMoves(b, r, c).forEach(([dr,dc])=>{
+      if(hanging) return;
       const enemy = b[dr]?.[dc];
-      if(enemy && enemy.o!==o){
-        // 自駒より敵駒が高価値の場合のみボーナス（等価以下は割引）
-        const myVal = PV[myPiece.p] || 0;
+      if(enemy && enemy.o !== o){
         const enemyVal = PV[enemy.p] || 0;
         const ratio = Math.min(1.0, enemyVal / (myVal + 1));
-        threatBonus += enemyVal * ratio * AI_THREAT_SCALE;
+        mobility[o] += enemyVal * ratio * AI_THREAT_SCALE;
       }
     });
   }
-  return seen.size + threatBonus;
-}
+  for(let o=0;o<3;o++) mobility[o] += moves[o].size;
 
-function calcKingSafety(b, o){
-  const [kr,kc] = findKingOn(b, o);
-  if(kr<0) return 0;
-
-  // 自分の駒の利きを収集（王以外）
-  const myMoves = new Set();
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    if(b[r][c]?.o!==o || b[r][c]?.p==='OU') continue;
-    rawMoves(b,r,c).forEach(([dr,dc])=>myMoves.add(dr+','+dc));
+  // kingSafety計算
+  const kingSafety = [0, 0, 0];
+  for(let o=0;o<3;o++){
+    const [kr,kc] = findKingOn(b, o);
+    if(kr<0) continue;
+    let covered=0, total=0, danger=0;
+    for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+      const nr=kr+dr, nc=kc+dc;
+      if(nr<0||nr>=9||nc<0||nc>=9) continue;
+      total++;
+      const cell = b[nr][nc];
+      const key = nr+','+nc;
+      if((cell?.o===o) || moves[o].has(key)) covered++;
+      // 敵の利きが届いているか
+      if(attackedBy[key]){
+        for(const eo of attackedBy[key]){ if(eo!==o){ danger++; break; } }
+      }
+    }
+    const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
+    kingSafety[o] = safety - danger * 0.15;
   }
 
-  // 敵全員の利きを収集
-  const enemyMoves = new Set();
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    if(!b[r][c] || b[r][c].o===o) continue;
-    rawMoves(b,r,c).forEach(([dr,dc])=>enemyMoves.add(dr+','+dc));
-  }
-
-  let covered = 0, total = 0, danger = 0;
-  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
-    const nr=kr+dr, nc=kc+dc;
-    if(nr<0||nr>=9||nc<0||nc>=9) continue;
-    total++;
-    const cell = b[nr][nc];
-    if((cell?.o===o) || myMoves.has(nr+','+nc)) covered++;
-    if(enemyMoves.has(nr+','+nc)) danger++;
-  }
-
-  const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
-  return safety - danger * 0.15; // 敵の利きが届くマスごとに減点
+  return {mobility, kingSafety};
 }
 
 function calcEntryBonus(b, o){
@@ -1182,11 +1160,12 @@ function evalStaticMaxN(b, h, elim){
   }
 
   const pieceScore = pieceScores(b,h,[0,1,2]);
+  const {mobility, kingSafety} = calcAllStats(b); // 一括計算
   const raw = {};
   alive.forEach(o=>{
     raw[o] = pieceScore[o] - (PV['OU'] || 0)
-           + calcMobility(b,o)   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-           + calcKingSafety(b,o) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
+           + mobility[o]   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
+           + kingSafety[o] * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
            + calcEntryBonus(b,o);
   });
 
@@ -1238,12 +1217,13 @@ function evalStatic(b, h, elim, vp){
     const alive = [0,1,2].filter(o=>!elim[o]);
 
     // 各プレイヤーの生評価値を集計（王は全員持っているので除外、差分のみ意味がある）
+    const {mobility, kingSafety} = calcAllStats(b); // 一括計算
     const raw = {};
     alive.forEach(o=>{
       const ps = pieceScore[o] - (PV['OU'] || 0); // 王を除いた駒スコア
       raw[o] = ps
-             + calcMobility(b,o)    * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-             + calcKingSafety(b,o)  * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
+             + mobility[o]   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
+             + kingSafety[o] * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
              + calcEntryBonus(b,o);
     });
 
@@ -1281,25 +1261,22 @@ function evalStatic(b, h, elim, vp){
   // ── 共闘モード──
   const humanIsElim = elim[humanPlayer];
 
+  const {mobility, kingSafety} = calcAllStats(b); // 一括計算
   if(humanIsElim){
     const c1=cpus[0], c2=cpus[1];
-    // c1視点のスコアを計算し、vpに応じて符号反転
     let score = pieceScore[c1] - pieceScore[c2];
-    score += (calcMobility(b,c1) - calcMobility(b,c2)) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
+    score += (mobility[c1] - mobility[c2]) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
     score += calcEntryBonus(b,c1) - calcEntryBonus(b,c2);
-    score += (calcKingSafety(b,c1) - calcKingSafety(b,c2)) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
+    score += (kingSafety[c1] - kingSafety[c2]) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
     return vp === c1 ? score : -score;
   } else {
     const hu = humanPlayer;
-    // CPU全員 vs 人間: CPUの駒合計 - 人間の駒合計
     let score = pieceScore.reduce((acc, cur, i) => acc + (i === hu ? -cur : cur), 0);
     const liveCpus = [0,1,2].filter(o=>o!==hu&&!elim[o]);
-    const huMob = calcMobility(b, hu);
-    const huSafe = calcKingSafety(b, hu);
     liveCpus.forEach(cpu => {
       score += calcEntryBonus(b, cpu);
-      score += (calcMobility(b, cpu) - huMob) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
-      score += (calcKingSafety(b, cpu) - huSafe) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
+      score += (mobility[cpu] - mobility[hu]) * AI_MOBILITY_MULT * AI_MOBILITY_SCALE;
+      score += (kingSafety[cpu] - kingSafety[hu]) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
     });
     return score;
   }
@@ -1466,12 +1443,7 @@ function quickMoveScore(bd, mv, owner) {
 }
 
 
-// ミニマックス探索
-// depth = 残り手数（1手ごとに-1）
-// rootAI: 自由対局モードで「誰の視点か」を示す（パラノイド探索）
-
-// max^n：各プレイヤーが自分のスコアを最大化（三つ巴）
-// 共闘モードはパラノイドのまま（スカラーを返す）
+// ── 探索（三つ巴=max^n / 共闘=パラノイド） ──
 function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1){
 
   if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
@@ -1607,7 +1579,8 @@ function aiMove(o,bd,hd,elim){
   }
 
   const elapsed = (performance.now() - t0).toFixed(0);
-  console.log(`[AI] ${['青','赤','緑'][o]} ${elapsed}ms / eval:${evalStaticCount}`);
+  const perfEl = document.getElementById('perf-info');
+  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]} ${elapsed}ms / eval:${evalStaticCount}`;
   return best ?? candidates[0] ?? null;
 }
 
