@@ -892,8 +892,12 @@ function simApply(bd, hd, elim, mv, o){
   // =====================
   if(cap){
 
+    // 脱落プレイヤーの駒は無条件取得
+    if(elim[cap.o]){
+      h[o].push(cap.p);
+    }
     // 成り駒は無条件保持
-    if(cap.pr){
+    else if(cap.pr){
       h[o].push(cap.p);
     }
     else {
@@ -979,7 +983,9 @@ function applyMoveInPlace(bd, hd, elim, mv, o) {
   // 通常の取得：持ち駒に加えるか判定（simApplyと同じ条件）
   if (toCell) {
     let addToHand = false;
-    if (toCell.pr) {
+    if (elim[toCell.o]) {
+      addToHand = true; // 脱落プレイヤーの駒は無条件取得
+    } else if (toCell.pr) {
       addToHand = true;
     } else {
       const [kr, kc] = findKingOn(bd, toCell.o);
