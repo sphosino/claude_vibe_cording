@@ -668,8 +668,11 @@ function setHumanPlayer(p){
     gover=false; moveCount=0; kifu=[]; renderKifu(); turn=0; winType='normal'; lastMove=null; collusionTarget=null; humanEliminated=eliminated[p]; gameGen++; render(); if(p!==0) setTimeout(()=>kickAI(), AI_DELAY_MS);
   } else if(!gover && moveCount > 0){
     // 対局中・停止後など局面が存在する場合はinitせず現局面から継続
-    humanEliminated=eliminated[p]; gameGen++;
+    humanEliminated=eliminated[p];
+    // turnをそのまま使うとhuman/AI噛み合わないので手番を人間から始め直す
+    turn=p; gameGen++;
     selected=null; vmoves=[]; selHand=false; promoQ=null;
+    setStatus(pName(p)+'の番です');
     render();
     if(p!==0) setTimeout(()=>kickAI(), AI_DELAY_MS);
   } else {
