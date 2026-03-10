@@ -1521,10 +1521,10 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       !mv.drop && bd[mv.tr]?.[mv.tc] && bd[mv.tr][mv.tc].o !== turnPlayer &&
       (PV[bd[mv.tr][mv.tc].p] || 0) >= PV['GIN']
     );
-    const slicedSetC = new Set(slicedC.map(m=>m.fr+','+m.fc+','+m.tr+','+m.tc));
+    const slicedSetC = new Set(slicedC.map(m=>`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
     moves = slicedC
-      .concat(entryMvsC .filter(m=>!slicedSetC.has(m.fr+','+m.fc+','+m.tr+','+m.tc)))
-      .concat(captureMvsC.filter(m=>!slicedSetC.has(m.fr+','+m.fc+','+m.tr+','+m.tc)));
+      .concat(entryMvsC .filter(m=>!slicedSetC.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)))
+      .concat(captureMvsC.filter(m=>!slicedSetC.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)));
 
     if(isHuman){
       let best = Infinity;
@@ -1597,10 +1597,10 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
     !mv.drop && bd[mv.tr]?.[mv.tc] && bd[mv.tr][mv.tc].o !== turnPlayer &&
     (PV[bd[mv.tr][mv.tc].p] || 0) >= PV['GIN']
   );
-  const slicedSet = new Set(sliced.map(m=>m.fr+','+m.fc+','+m.tr+','+m.tc));
+  const slicedSet = new Set(sliced.map(m=>`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
   moves = sliced
-    .concat(entryMvs .filter(m=>!slicedSet.has(m.fr+','+m.fc+','+m.tr+','+m.tc)))
-    .concat(captureMvs.filter(m=>!slicedSet.has(m.fr+','+m.fc+','+m.tr+','+m.tc)));
+    .concat(entryMvs .filter(m=>!slicedSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)))
+    .concat(captureMvs.filter(m=>!slicedSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)));
 
   let bestScores = null;
   for(const mv of moves){
@@ -1682,9 +1682,9 @@ function aiMove(o,bd,hd,elim){
     : moves.slice(0, AI_MOVE_CANDIDATES);
 
   // 入玉手をcandidatesに追加（重複除去）
-  const candSet = new Set(baseCands.map(m => m.fr+','+m.fc+','+m.tr+','+m.tc));
+  const candSet = new Set(baseCands.map(m => `${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
   const candidates = baseCands.concat(
-    entryMoves.filter(m => !candSet.has(m.fr+','+m.fc+','+m.tr+','+m.tc))
+    entryMoves.filter(m => !candSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`))
   );
 
   let best=null, bestScore=-Infinity, bestPV=[];
