@@ -532,6 +532,7 @@ function toggleSelfPlay(){
     humanPlayer=0;
     gameGen++; // キュー済みのkickAI/setTimeoutをすべて無効化
     document.getElementById('sp-resume-btn').style.display='inline-block';
+    setTimeout(()=>fitCanvas(), 0); // レイアウト変化後にcanvasスケール再計算
     render();
   } else {
     // 開始：現在の難易度設定をそのまま使う
@@ -546,6 +547,7 @@ function toggleSelfPlay(){
     selfPlayGames=0;
     selfPlayTotalMoves=0;
     document.getElementById('sp-panel').style.display='block';
+    setTimeout(()=>fitCanvas(), 0); // sp-panel表示後にcanvasスケール再計算
     document.getElementById('sp-btn').textContent='⏹ 対局中...';
     document.getElementById('sp-stop-btn').textContent='■ 停止';
     document.getElementById('sp-stop-btn').style.borderColor='#ff4433';
@@ -1864,6 +1866,7 @@ function resumeSelfPlay(){
   document.getElementById('sp-stop-btn').disabled=false;
   document.getElementById('sp-resume-btn').style.display='none';
   setSelfPlayDiffBtns(true);
+  setTimeout(()=>fitCanvas(), 0); // レイアウト変化後にcanvasスケール再計算
   const pct=i=>{ const t=selfPlayGames; return t>0?Math.round(selfPlayWins[i]/t*100)+'%':'-%'; };
   document.getElementById('sp-status').textContent=`対局中... 青${pct(0)} 赤${pct(1)} 緑${pct(2)}`;
   // gover状態（1局終了後に停止）なら次局開始、そうでなければ現局面から再開
@@ -1947,6 +1950,22 @@ function handleClick(e){
     if(cell?.o===humanPlayer){
       selected=[r,c];selHand=false;
       vmoves=allMoves(humanPlayer,board).filter(m=>!m.drop&&m.fr===r&&m.fc===c);
+      // 玉の移動先に敵の利きがあれば warn フラグ（入玉・通常移動両方）
+      if(cell.p==='OU'){
+        vmoves = vmoves.map(m=>{
+          if(squareAttackedBy(board,m.tr,m.tc,humanPlayer,eliminated))
+            return {...m, warn:true};
+          return m;
+        });
+      } else {
+        // ピン駒チェック：動かすと玉が取られる手に warn フラグ
+        vmoves = vmoves.map(m=>{
+          const undo = applyMoveInPlace(board, hand, eliminated, m, humanPlayer);
+          const exposed = !eliminated[humanPlayer] && kingWouldBeCaptured(board, humanPlayer, eliminated);
+          undoMoveInPlace(board, hand, eliminated, m, humanPlayer, undo);
+          return exposed ? {...m, warn:true} : m;
+        });
+      }
     }
   } else if(hi>=0){
     const uh=uniqueHand(humanPlayer);
@@ -2166,7 +2185,13 @@ function drawAllPieces(){
     const [pr,pc]=logToPhys(m.tr,m.tc);
     const cx=BX+pc*CS, cy=BY+pr*CS;
     const cap=!m.drop&&board[m.tr]?.[m.tc];
-    if(cap){
+    if(m.warn){
+      // 入玉マスに敵の利きあり → 黄色警告
+      ctx.fillStyle='rgba(255,200,0,0.28)';ctx.fillRect(cx+1,cy+1,CS-2,CS-2);
+      ctx.strokeStyle='#ffcc00';ctx.lineWidth=2.5;ctx.strokeRect(cx+1,cy+1,CS-2,CS-2);
+      ctx.fillStyle='#ffcc00';ctx.font='bold 14px sans-serif';ctx.textAlign='center';ctx.textBaseline='middle';
+      ctx.fillText('⚠',cx+CS/2,cy+CS/2);
+    } else if(cap){
       ctx.fillStyle='rgba(255,80,0,0.22)';ctx.fillRect(cx+1,cy+1,CS-2,CS-2);
       ctx.strokeStyle='#ff6600';ctx.lineWidth=2.5;ctx.strokeRect(cx+1,cy+1,CS-2,CS-2);
     } else {
