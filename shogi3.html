@@ -299,11 +299,12 @@ let canvas, ctx;
 // 難易度設定テーブル
 // cands=root候補数, candsDeep=最深ノード候補数, 中間は深さに応じて線形補完
 const DIFFICULTY_LEVELS = {
-  beginner: { label:'入門', depth:1, cands:3, candsDeep:3, noise:200, mobilityMult:0.5, emoji:'🌱' },
-  easy:     { label:'初級', depth:3, cands:6, candsDeep:3, noise:80,  mobilityMult:0.7, emoji:'🌿' },
-  normal:   { label:'中級', depth:4, cands:9, candsDeep:3, noise:60,  mobilityMult:0.9, emoji:'⚔️' },
-  hard:     { label:'上級', depth:5, cands:12, candsDeep:3, noise:20,  mobilityMult:1.1, emoji:'🔥' },
+  beginner: { label:'入門', depth:1, cands:3,  candsDeep:3, noise:200, mobilityMult:0.5, emoji:'🌱', timeMs:500  },
+  easy:     { label:'初級', depth:3, cands:6,  candsDeep:3, noise:80,  mobilityMult:0.7, emoji:'🌿', timeMs:1000 },
+  normal:   { label:'中級', depth:4, cands:9,  candsDeep:3, noise:60,  mobilityMult:0.9, emoji:'⚔️', timeMs:2000 },
+  hard:     { label:'上級', depth:5, cands:12, candsDeep:3, noise:20,  mobilityMult:1.1, emoji:'🔥', timeMs:4000 },
 };
+const AI_MAX_DEPTH = 12; // 反復深化の上限深さ（時間切れで実際はこれより浅く終わる）
 let currentDifficulty = 'normal';
 
 // ── AI探索パラメータ（難易度別に上書き） ──
@@ -312,6 +313,7 @@ let AI_MOVE_CANDIDATES      = DIFFICULTY_LEVELS.normal.cands;
 let AI_MOVE_CANDIDATES_DEEP = DIFFICULTY_LEVELS.normal.candsDeep;
 let AI_NOISE                = DIFFICULTY_LEVELS.normal.noise;
 let AI_MOBILITY_MULT        = DIFFICULTY_LEVELS.normal.mobilityMult;
+let AI_TIME_LIMIT_MS        = DIFFICULTY_LEVELS.normal.timeMs; // 人間対局時の思考時間制限
 
 // ── AI評価関数定数 ──
 const AI_MOBILITY_SCALE      = 10;    // モビリティ1マスあたりの点数
@@ -1091,9 +1093,9 @@ function pieceScores(b, h, owners) {
 }
 
 // 残り深さに応じた候補数を線形補完（root=cands、最深=candsDeep）
-function candsForDepth(depth){
-  if(AI_SEARCH_DEPTH <= 1) return AI_MOVE_CANDIDATES;
-  const t = (depth - 1) / (AI_SEARCH_DEPTH - 1);
+function candsForDepth(depth, maxDepth){
+  if(maxDepth <= 1) return AI_MOVE_CANDIDATES;
+  const t = (depth - 1) / (maxDepth - 1);
   return Math.round(AI_MOVE_CANDIDATES_DEEP + t * (AI_MOVE_CANDIDATES - AI_MOVE_CANDIDATES_DEEP));
 }
 
@@ -1486,7 +1488,7 @@ function quickMoveScore(bd, mv, owner) {
 
 
 // ── 探索（三つ巴=max^n / 共闘=パラノイド） ──
-function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null){
+function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth){
 
   if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
     if(cpuCollusion) return evalStatic(bd, hd, elim, rootAI);
@@ -1509,7 +1511,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
     let moves = allMovesOn(bd, hd, turnPlayer, elim);
     moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
     // 深いノードほど候補を絞る（root側は多く、葉側は少なく）
-    const slicedC = moves.slice(0, candsForDepth(depth));
+    const slicedC = moves.slice(0, candsForDepth(depth, maxDepth));
     const entryMvsC = moves.filter(mv =>
       !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
       ((turnPlayer===0&&mv.tr===0)||(turnPlayer===1&&mv.tr===8)||(turnPlayer===2&&mv.tc===0))
@@ -1541,7 +1543,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const childPV = pvArr ? [] : null;
-        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV);
+        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth);
         undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
         if(score < best){
           best = score;
@@ -1568,7 +1570,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const childPV = pvArr ? [] : null;
-        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV);
+        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth);
         undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
         if(score > best){
           best = score;
@@ -1584,7 +1586,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
   // ── 三つ巴：max^n（スコア配列）──
   let moves = allMovesOn(bd, hd, turnPlayer, elim);
   moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
-  const sliced = moves.slice(0, candsForDepth(depth));
+  const sliced = moves.slice(0, candsForDepth(depth, maxDepth));
   // 入玉手・高価値駒取り手はslice落ち防止で強制追加
   const entryMvs = moves.filter(mv =>
     !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
@@ -1616,7 +1618,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
     }
     const nxt = nextAliveOn(elim, turnPlayer);
     const childPV = pvArr ? [] : null;
-    const scores = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV);
+    const scores = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth);
     undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
     // turnPlayerの成分が最大の手を選ぶ（ノイズはaiMoveのrootのみ）
     if(bestScores === null || scores[turnPlayer] > bestScores[turnPlayer]){
@@ -1686,33 +1688,66 @@ function aiMove(o,bd,hd,elim){
   );
 
   let best=null, bestScore=-Infinity, bestPV=[];
-  const allResults = []; // 全候補手の評価結果を収集してランキング表示に使う
-  for(const mv of candidates){
-    const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
-        const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
-    const undo = applyMoveInPlace(bd, hd, elim, mv, o);
-    // 王を取れるなら即返す
-    if(undo.tryWin){
-      // 入玉の場合は移動後の盤面で利きチェック、王取りは無条件勝ち
-      if(!undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,o,elim)){
-        undoMoveInPlace(bd, hd, elim, mv, o, undo); return mv;
+  const allResults = [];
+
+  // ── 反復深化（人間対局=時間制限、自己対局=深さ制限） ──
+  const useTimeLimit = !selfPlayMode;
+  const timeLimit = AI_TIME_LIMIT_MS;
+  const depthLimit = selfPlayMode ? AI_SEARCH_DEPTH : AI_MAX_DEPTH;
+
+  let orderedCands = candidates.slice();
+  let lastCompleteResults = null;
+  let reachedDepth = 0;
+
+  for(let d = 1; d <= depthLimit; d++){
+    // 時間切れチェック（depth=1は必ず完了させる）
+    if(useTimeLimit && d > 1 && performance.now() - t0 >= timeLimit) break;
+
+    const iterResults = [];
+    let timedOut = false;
+
+    for(const mv of orderedCands){
+      const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
+      const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
+      const undo = applyMoveInPlace(bd, hd, elim, mv, o);
+      if(undo.tryWin){
+        if(!undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,o,elim)){
+          undoMoveInPlace(bd, hd, elim, mv, o, undo); return mv;
+        }
       }
-      // 入玉マスに利きあり→通常評価へ
+      if(!undo.entryWin && !elim[o] && kingWouldBeCaptured(bd, o, elim)){ undoMoveInPlace(bd, hd, elim, mv, o, undo); continue; }
+      const nxt = nextAliveOn(elim, o);
+      const childPV = [];
+      const result = minimaxRound(bd, hd, elim, d, -Infinity, Infinity, nxt, o, childPV, d);
+      const rawV = Array.isArray(result) ? result[o] : result;
+      undoMoveInPlace(bd, hd, elim, mv, o, undo);
+      iterResults.push({mv, rawV, pvPiece, pvPr,
+        pv: [{...mv, pvPiece, pvPr, pvOwner:o}, ...childPV]});
+
+      // 手ごとに時間チェック（次の手に入る前に時間切れなら中断）
+      if(useTimeLimit && performance.now() - t0 >= timeLimit){
+        timedOut = true; break;
+      }
     }
-    // 王手放置・自爆手は除外（ただし入玉手は除外しない）
-    if(!undo.entryWin && !elim[o] && kingWouldBeCaptured(bd, o, elim)){ undoMoveInPlace(bd, hd, elim, mv, o, undo); continue; }
-    const nxt = nextAliveOn(elim, o);
-    const childPV = [];
-    const result = minimaxRound(bd, hd, elim, AI_SEARCH_DEPTH, -Infinity, Infinity, nxt, o, childPV);
-    // max^nは配列、共闘モードはスカラー
-    const rawV = (Array.isArray(result) ? result[o] : result);
-    const v = rawV + (Math.random()-0.5)*AI_NOISE;
-    const fullPV = [{...mv, pvPiece, pvPr, pvOwner:o}, ...childPV];
-    allResults.push({score: rawV, pv: fullPV}); // ノイズなしスコアで記録
-    undoMoveInPlace(bd, hd, elim, mv, o, undo);
-    if(v>bestScore){
-      bestScore=v; best=mv;
-      bestPV = fullPV;
+
+    // このdepthが時間切れで中断された場合は結果を使わない
+    if(timedOut && iterResults.length < orderedCands.length){
+      break;
+    }
+
+    // 完了した深さの結果でムーブオーダリング更新
+    iterResults.sort((a,b) => b.rawV - a.rawV);
+    orderedCands = iterResults.map(r => r.mv);
+    lastCompleteResults = iterResults;
+    reachedDepth = d;
+  }
+
+  // 最後に完了した深さの結果からbest・allResultsを確定
+  if(lastCompleteResults){
+    for(const r of lastCompleteResults){
+      const v = r.rawV + (Math.random()-0.5)*AI_NOISE;
+      if(v > bestScore){ bestScore=v; best=r.mv; bestPV=r.pv; }
+      allResults.push({score: r.rawV, pv: r.pv});
     }
   }
 
@@ -1720,7 +1755,7 @@ function aiMove(o,bd,hd,elim){
   const perfEl  = document.getElementById('perf-info');
   const thinkEl = document.getElementById('think-panel');
 
-  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]}将 ${elapsed}ms / eval:${evalStaticCount}`;
+  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]}将 ${elapsed}ms depth:${reachedDepth} / eval:${evalStaticCount}`;
 
   if(thinkEl && allResults.length > 0){
     allResults.sort((a,b) => b.score - a.score);
@@ -2441,11 +2476,12 @@ function setDifficulty(level){
   const cfg = DIFFICULTY_LEVELS[level];
   if(!cfg) return;
   currentDifficulty = level;
-  AI_SEARCH_DEPTH    = cfg.depth;
-  AI_MOVE_CANDIDATES = cfg.cands;
+  AI_SEARCH_DEPTH      = cfg.depth;
+  AI_MOVE_CANDIDATES   = cfg.cands;
   AI_MOVE_CANDIDATES_DEEP = cfg.candsDeep;
-  AI_NOISE           = cfg.noise;
-  AI_MOBILITY_MULT = cfg.mobilityMult;
+  AI_NOISE             = cfg.noise;
+  AI_MOBILITY_MULT     = cfg.mobilityMult;
+  AI_TIME_LIMIT_MS     = cfg.timeMs;
   // ボタンハイライト更新
   Object.keys(DIFFICULTY_LEVELS).forEach(k=>{
     const btn=document.getElementById('diff-'+k);
