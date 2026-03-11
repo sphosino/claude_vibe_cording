@@ -339,6 +339,7 @@ const AI_DELAY_MS      = 400;  // AI着手後の表示待機(ms)
 const AI_SKIP_DELAY_MS = 800;  // スキップ時の待機(ms)
 
 let evalStaticCount = 0; // パフォーマンス計測用（perf表示）
+let allMovesCount   = 0; // 合法手生成呼び出し回数
 
 // ── 駒の価値・名前テーブル ──
 const PV  = {FU:100, KY:300, KE:350, GIN:400, KIN:500, KAKU:800, HI:900, OU:10000000};
@@ -1117,15 +1118,12 @@ function calcStats(b, isEnemy){
   const moves = [new Set(), new Set(), new Set()];
   const attackedBy = {};
 
-  // 全駒の利きを1回のスキャンで収集
+  // 全駒の利きを1回のスキャンで収集（attackedByはrawMoves内で直接カウント）
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
     if(!cell) continue;
-    rawMoves(b, r, c).forEach(([dr,dc])=>{
+    rawMoves(b, r, c, attackedBy).forEach(([dr,dc])=>{
       moves[cell.o].add(dr+','+dc);
-      const key = dr+','+dc;
-      if(!attackedBy[key]) attackedBy[key] = new Set();
-      attackedBy[key].add(cell.o);
     });
   }
 
@@ -1335,17 +1333,101 @@ function evalStatic(b, h, elim, vp){
   }
 }
 
+// ── インクリメンタル attackedBy (GAB) ──
+// 影響キーだけ保存・復元するundo方式（全コピー不要）
+let gAttackedBy = {};
+
+function initGAB(bd){
+  gAttackedBy = {};
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++)
+    if(bd[r][c]) rawMoves(bd, r, c, gAttackedBy);
+}
+
+function gabRemove(bd, r, c){
+  const cell = bd[r][c];
+  if(!cell) return;
+  rawMoves(bd, r, c).forEach(([dr,dc])=>{
+    const key = dr+','+dc;
+    if(!gAttackedBy[key]) return;
+    gAttackedBy[key].delete(cell.o);
+    if(!gAttackedBy[key].size) delete gAttackedBy[key];
+  });
+}
+
+function gabAdd(bd, r, c){
+  if(bd[r]?.[c]) rawMoves(bd, r, c, gAttackedBy);
+}
+
+const _GAB_SLIDE = new Set(['HI','KAKU','RYU','UMA','KY']);
+const _GAB_DIRS8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
+
+function gabFindSlides(bd, r, c){
+  const slides = [];
+  for(const [dr,dc] of _GAB_DIRS8){
+    let nr=r+dr, nc=c+dc;
+    while(nr>=0&&nr<9&&nc>=0&&nc<9){
+      const cell=bd[nr][nc];
+      if(cell){ if(_GAB_SLIDE.has(cell.p)) slides.push([nr,nc]); break; }
+      nr+=dr; nc+=dc;
+    }
+  }
+  return slides;
+}
+
+// apply前：影響キーの現在値だけ保存して寄与を削除
+// 戻り値のsavedをgabRestoreに渡すとundo可能
+function gabApply(bd, mv){
+  const affected = new Set();
+  if(!mv.drop){
+    affected.add(`${mv.fr},${mv.fc}`);
+    gabFindSlides(bd, mv.fr, mv.fc).forEach(([r,c])=>affected.add(`${r},${c}`));
+  }
+  if(bd[mv.tr]?.[mv.tc]) affected.add(`${mv.tr},${mv.tc}`);
+  gabFindSlides(bd, mv.tr, mv.tc).forEach(([r,c])=>affected.add(`${r},${c}`));
+
+  // gabAfterで追加される可能性のあるキーも先読みして保存対象に含める
+  const toSave = new Set(affected);
+  toSave.add(`${mv.tr},${mv.tc}`);
+  if(!mv.drop) gabFindSlides(bd, mv.fr, mv.fc).forEach(([r,c])=>toSave.add(`${r},${c}`));
+  gabFindSlides(bd, mv.tr, mv.tc).forEach(([r,c])=>toSave.add(`${r},${c}`));
+
+  // 影響キーの現在値だけ保存（Set数個分のコピー、全体コピーではない）
+  const saved = {};
+  toSave.forEach(k=>{
+    saved[k] = gAttackedBy[k] ? new Set(gAttackedBy[k]) : null;
+  });
+
+  // 寄与を削除
+  affected.forEach(k=>{ const [r,c]=k.split(',').map(Number); gabRemove(bd,r,c); });
+  return {affected, saved};
+}
+
+// apply後：移動後の盤面で影響駒の寄与を再追加
+function gabAfter(bd, mv, affected){
+  const toAdd = new Set(affected);
+  toAdd.add(`${mv.tr},${mv.tc}`);
+  if(!mv.drop) gabFindSlides(bd, mv.fr, mv.fc).forEach(([r,c])=>toAdd.add(`${r},${c}`));
+  gabFindSlides(bd, mv.tr, mv.tc).forEach(([r,c])=>toAdd.add(`${r},${c}`));
+  toAdd.forEach(k=>{ const [r,c]=k.split(',').map(Number); gabAdd(bd,r,c); });
+}
+
+// undo：保存した影響キーだけ復元（全体コピー不要）
+function gabRestore(saved){
+  for(const k in saved){
+    if(saved[k] === null) delete gAttackedBy[k];
+    else gAttackedBy[k] = saved[k];
+  }
+}
+
 // 合法手生成（盤面引数版）
 function allMovesOn(bd,hd,o,elim){
-  if(elim[o]) return {moves:[], attackedBy:{}};
+  if(elim[o]) return {moves:[], attackedBy: gAttackedBy};
+  allMovesCount++;
   const res=[];
-  const attackedBy={};
-  // 盤上の駒
+  // プレイヤーoの駒だけスキャン（attackedByはgAttackedByを使用）
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell=bd[r][c]; if(!cell) continue;
-    // rawMovesにattackedByを渡して直接カウント（別途forEachループ不要）
-    const dests=rawMoves(bd,r,c,attackedBy);
-    if(cell.o!==o) continue;
+    const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
+    const dests=rawMoves(bd,r,c);
     dests.forEach(([tr,tc])=>{
       const target=bd[tr][tc];
       if(cpuCollusion && !humanEliminated &&
@@ -1378,7 +1460,7 @@ function allMovesOn(bd,hd,o,elim){
       res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
     }
   });
-  return {moves:res, attackedBy};
+  return {moves:res, attackedBy: gAttackedBy};
 }
 
 // elim配列を使った次の生存プレイヤー取得
@@ -1539,12 +1621,14 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       for(const mv of moves){
         const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
         const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
+        const {affected: rk, saved: sv} = gabApply(bd, mv);
         const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+        gabAfter(bd, mv, rk);
         if(undo.tryWin){
           const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
           if(safe){
             const score = evalStatic(bd, hd, elim, rootAI); // 玉取り後の局面を正規評価
-            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv);
             return score;
           }
           // 利きあり入玉→通常評価へ
@@ -1552,7 +1636,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
         const nxt = nextAliveOn(elim, turnPlayer);
         const childPV = pvArr ? [] : null;
         const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit);
-        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv);
         if(score < best){
           best = score;
           if(pvArr){ pvArr.length=0; pvArr.push({...mv,pvPiece,pvPr,pvOwner:turnPlayer},...(childPV||[])); }
@@ -1567,19 +1651,21 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       for(const mv of moves){
         const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
         const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
+        const {affected: rk2, saved: sv2} = gabApply(bd, mv);
         const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+        gabAfter(bd, mv, rk2);
         if(undo.tryWin){
           const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
           if(safe){
             const score = evalStatic(bd, hd, elim, rootAI);
-            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv2);
             return score;
           }
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const childPV = pvArr ? [] : null;
         const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit);
-        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv2);
         if(score > best){
           best = score;
           if(pvArr){ pvArr.length=0; pvArr.push({...mv,pvPiece,pvPr,pvOwner:turnPlayer},...(childPV||[])); }
@@ -1615,12 +1701,14 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
     for(const mv of moves){
       const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
       const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
+      const {affected: rk3, saved: sv3} = gabApply(bd, mv);
       const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+      gabAfter(bd, mv, rk3);
       if(undo.tryWin){
         const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
         if(safe){
           const {raw: r, alive: al} = evalRawMaxN(bd, hd, elim);
-          undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+          undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv3);
           return {raw: r, alive: al};
         }
       }
@@ -1631,7 +1719,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
         bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit,
         turnPlayer, bestScoreForMe
       );
-      undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+      undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv3);
 
       // 自分視点で解釈して最善手を更新
       const scoreForMe = calcWeightedScore(childRaw, childAlive, turnPlayer);
@@ -1679,6 +1767,8 @@ function kingWouldBeCaptured(bd, o, elim){
 
 function aiMove(o,bd,hd,elim){
   evalStaticCount = 0;
+  allMovesCount   = 0;
+  initGAB(bd);
   const t0 = performance.now();
   let {moves, attackedBy: rootAttackedBy}=allMovesOn(bd,hd,o,elim);
 
@@ -1782,7 +1872,7 @@ function aiMove(o,bd,hd,elim){
   const perfEl  = document.getElementById('perf-info');
   const thinkEl = document.getElementById('think-panel');
 
-  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]}将 ${elapsed}ms depth:${reachedDepth} / eval:${evalStaticCount}`;
+  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]}将 ${elapsed}ms depth:${reachedDepth} / eval:${evalStaticCount} / moves:${allMovesCount}`;
 
   if(thinkEl && allResults.length > 0){
     allResults.sort((a,b) => b.score - a.score);
