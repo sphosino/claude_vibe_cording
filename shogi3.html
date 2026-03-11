@@ -226,10 +226,10 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
       <!-- 難易度行 -->
       <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:center;width:100%;">
         <span id="diff-label" style="color:#ffaa44;font-size:13px;letter-spacing:1px;">⚔️ 難易度: 中級</span>
-        <button id="diff-beginner" onclick="setDifficulty('beginner')">🌱 入門</button>
-        <button id="diff-easy"     onclick="setDifficulty('easy')">🌿 初級</button>
-        <button id="diff-normal"   onclick="setDifficulty('normal')">⚔️ 中級</button>
-        <button id="diff-hard"     onclick="setDifficulty('hard')">🔥 上級</button>
+        <button id="diff-beginner" onclick="setDifficulty('beginner')" title="CPU思考時間: 0.5秒">🌱 入門<span style="font-size:10px;opacity:0.7;margin-left:3px">0.5s</span></button>
+        <button id="diff-easy"     onclick="setDifficulty('easy')"     title="CPU思考時間: 1秒">🌿 初級<span style="font-size:10px;opacity:0.7;margin-left:3px">1s</span></button>
+        <button id="diff-normal"   onclick="setDifficulty('normal')"   title="CPU思考時間: 2秒">⚔️ 中級<span style="font-size:10px;opacity:0.7;margin-left:3px">2s</span></button>
+        <button id="diff-hard"     onclick="setDifficulty('hard')"     title="CPU思考時間: 4秒">🔥 上級<span style="font-size:10px;opacity:0.7;margin-left:3px">4s</span></button>
       </div>
       <!-- 共闘設定行 -->
       <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;border-top:1px solid #503010;padding-top:8px;margin-top:4px;">
@@ -1134,23 +1134,19 @@ function calcStats(b, isEnemy){
     }
   }
 
-  // mobility・脅威ボーナス計算
+  // mobility・脅威ペナルティ計算
+  // threat[o] = 自駒が敵に狙われている価値の合計（マイナス評価に使う）
   const mobility = [0, 0, 0];
   const threat   = [0, 0, 0];
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
     if(!cell) continue;
     const o = cell.o;
-    if(hangingSet[o][r+','+c]) continue;
-    const myVal = PV[cell.p] || 0;
-    rawMoves(b, r, c).forEach(([dr,dc])=>{
-      const enemy = b[dr]?.[dc];
-      if(enemy && isEnemy(o, enemy.o) && enemy.p !== 'OU'){
-        const enemyVal = PV[enemy.p] || 0;
-        const ratio = Math.min(1.0, enemyVal / (myVal + 1));
-        threat[o] += enemyVal * ratio * AI_THREAT_SCALE;
-      }
-    });
+    if(cell.p === 'OU') continue; // 玉はkingSafetyで評価
+    if(hangingSet[o][r+','+c]){
+      const myVal = PV[cell.p] || 0;
+      threat[o] += myVal * AI_THREAT_SCALE; // 狙われている駒の価値分を減点用に積む
+    }
   }
   for(let o=0;o<3;o++) mobility[o] = moves[o].size;
 
@@ -1209,7 +1205,7 @@ function calcRawScores(b, h, elim){
   alive.forEach(o=>{
     raw[o] = pieceScore[o]
            + mobility[o]   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-           + threat[o]     * AI_MOBILITY_MULT
+           - threat[o]     * AI_MOBILITY_MULT  // 狙われている駒の価値分を減点
            + kingSafety[o] * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
            + calcEntryBonus(b, o);
   });
@@ -1314,19 +1310,17 @@ function evalStatic(b, h, elim, vp){
     const c1=alive[0], c2=alive[1];
     let score = pieceScore[c1] - pieceScore[c2]
               + (mobility[c1]   - mobility[c2])   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-              + (threat[c1]     - threat[c2])     * AI_MOBILITY_MULT
+              - (threat[c1]     - threat[c2])     * AI_MOBILITY_MULT  // c1が狙われてたら減点
               + (kingSafety[c1] - kingSafety[c2]) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
               + calcEntryBonus(b,c1) - calcEntryBonus(b,c2);
     return vp === c1 ? score : -score;
   } else {
     const hu = humanPlayer;
     const liveCpus = alive.filter(o=>o!==hu);
-    // piece score: CPU合計 - 人間
     let score = pieceScore.reduce((acc, cur, i) => acc + (i === hu ? -cur : cur), 0);
-    // mobility/threat/kingSafety: CPU合計 - 人間（humanを1回だけ引く）
     const sumCpu = (arr) => liveCpus.reduce((s,c) => s + arr[c], 0);
     score += (sumCpu(mobility)   - mobility[hu])   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-           + (sumCpu(threat)     - threat[hu])     * AI_MOBILITY_MULT
+           - (sumCpu(threat)     - threat[hu])     * AI_MOBILITY_MULT  // CPUが狙われてたら減点
            + (sumCpu(kingSafety) - kingSafety[hu]) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
     liveCpus.forEach(cpu => score += calcEntryBonus(b, cpu));
     return score;
@@ -1335,14 +1329,21 @@ function evalStatic(b, h, elim, vp){
 
 // 合法手生成（盤面引数版）
 function allMovesOn(bd,hd,o,elim){
-  if(elim[o]) return [];
+  if(elim[o]) return {moves:[], attackedBy:{}};
   const res=[];
+  const attackedBy={};
   // 盤上の駒
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
+    const cell=bd[r][c]; if(!cell) continue;
     const dests=rawMoves(bd,r,c);
+    // attackedByを全プレイヤー分収集（利きオーダリング用）
+    dests.forEach(([dr,dc])=>{
+      const key=dr+','+dc;
+      if(!attackedBy[key]) attackedBy[key]=new Set();
+      attackedBy[key].add(cell.o);
+    });
+    if(cell.o!==o) continue;
     dests.forEach(([tr,tc])=>{
-      // 共闘モード時のみ: CPUがチームメイトの駒を取る手は生成しない
       const target=bd[tr][tc];
       if(cpuCollusion && !humanEliminated &&
          o!==humanPlayer && 
@@ -1374,7 +1375,7 @@ function allMovesOn(bd,hd,o,elim){
       res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
     }
   });
-  return res;
+  return {moves:res, attackedBy};
 }
 
 // elim配列を使った次の生存プレイヤー取得
@@ -1387,33 +1388,28 @@ function nextAliveOn(elim, current){
   return -1;
 }
 // 候補手ソート用スコア（minimax全ノードで呼ばれるので軽量に）
-function quickMoveScore(bd, mv, owner) {
+function quickMoveScore(bd, mv, owner, attackedBy={}) {
+  // attackedByで危険チェック（一発判定・軽量）
+  const isDanger = (r, c, o) => {
+    const key = r+','+c;
+    if(!attackedBy[key]) return false;
+    return [...attackedBy[key]].some(eo => eo !== o);
+  };
+
   if(mv.drop){
-    // 打った後の仮盤で利きを計算（移動と同じ式で統一）
     const tempBd = bd.map(r => r.slice());
     tempBd[mv.tr] = tempBd[mv.tr].slice();
     tempBd[mv.tr][mv.tc] = {p: mv.piece, o: owner ?? -1, pr: false};
     const dests = rawMoves(tempBd, mv.tr, mv.tc);
-    // 利きマス数（移動と同スケール）
     const mobilityGain = dests.length * AI_MOBILITY_SCALE;
-    // 敵駒への脅威ボーナス（移動と同じ式）
-    let threatBonus = 0;
-    dests.forEach(([dr, dc]) => {
-      const enemy = bd[dr]?.[dc];
-      if(enemy && enemy.o !== (owner ?? -1) && enemy.p !== 'OU'){
-        const myVal = PV[mv.piece] || 0;
-        const enemyVal = PV[enemy.p] || 0;
-        const ratio = Math.min(1.0, enemyVal / (myVal + 1));
-        threatBonus += enemyVal * ratio * AI_THREAT_SCALE;
-      }
-    });
-    const handCost = (PV[mv.piece] || 0) * AI_QMS_HAND_COST;
-    return mobilityGain + threatBonus - handCost;
+    const myVal = PV[mv.piece] || 0;
+    const dangerPenalty = isDanger(mv.tr, mv.tc, owner??-1) ? myVal * AI_THREAT_SCALE : 0;
+    const handCost = myVal * AI_QMS_HAND_COST;
+    return mobilityGain - dangerPenalty - handCost;
   }
   const target = bd[mv.tr][mv.tc];
-  if(target) return PV[target.p] * AI_QMS_CAPTURE_MULT + (mv.pro ? 50 : 0); // 取る手を優先
+  if(target) return PV[target.p] * AI_QMS_CAPTURE_MULT + (mv.pro ? 50 : 0);
 
-  // 移動前後の利きマス差分（その駒1枚のみ・軽量）
   const piece = bd[mv.fr][mv.fc];
   const before = rawMoves(bd, mv.fr, mv.fc).length;
   const tempBd = bd.map(r => r.slice());
@@ -1424,30 +1420,28 @@ function quickMoveScore(bd, mv, owner) {
   const after = rawMoves(tempBd, mv.tr, mv.tc);
   const mobilityDelta = (after.length - before) * AI_MOBILITY_SCALE;
 
+  const myVal = PV[piece.p] || 0;
+  // 元のマスが危険 → 逃げるボーナス / 移動先が危険 → ペナルティ（移動前のattackedByで近似）
+  const escapBonus    = isDanger(mv.fr, mv.fc, piece.o) ? myVal * AI_THREAT_SCALE : 0;
+  const dangerPenalty = isDanger(mv.tr, mv.tc, piece.o) ? myVal * AI_THREAT_SCALE : 0;
+
   // 角道・飛車道を開けるボーナス
-  // 元の位置(fr,fc)から8方向に味方の飛・角がいるか探し、
-  // そこから前方(逆方向)に開く利きマス数をボーナスに加算
   let openRoadBonus = 0;
   const DIRS = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
   for(const [dr,dc] of DIRS){
-    // 後ろ方向に飛・角を探す
     let br = mv.fr+dr, bc = mv.fc+dc;
     while(br>=0&&br<9&&bc>=0&&bc<9){
       const cell = bd[br][bc];
       if(!cell){ br+=dr; bc+=dc; continue; }
       if(cell.o === piece.o && (cell.p==='HI'||cell.p==='KAKU'||cell.p==='RYU'||cell.p==='UMA'||cell.p==='KY')){
-        // 飛・角が後ろにいた → 前方(-dr,-dc)方向に開く利きを数える
-        // tempBd上で前方に何マス通るか
         const fdr=-dr, fdc=-dc;
-        // 飛はtate/yoko、角はnaname方向のみ有効
         const isRook = cell.p==='HI'||cell.p==='RYU';
         const isBishop = cell.p==='KAKU'||cell.p==='UMA';
-        // 香車: プレイヤーごとに前方向のみ（P0=上方向dr:-1, P1=下dr:+1, P2=左dc:-1）
         const isLance = cell.p==='KY';
         const lanceDir = cell.o===0?[-1,0]:cell.o===1?[1,0]:[0,-1];
         const isDiag = Math.abs(dr)===1&&Math.abs(dc)===1;
         const isAxis = dr===0||dc===0;
-        const isLanceDir = isLance && dr===lanceDir[0] && dc===lanceDir[1]; // 香の後ろ方向
+        const isLanceDir = isLance && dr===lanceDir[0] && dc===lanceDir[1];
         if((isRook&&isAxis)||(isBishop&&isDiag)||isLanceDir){
           let fr2 = mv.fr+fdr, fc2 = mv.fc+fdc;
           let opened = 0;
@@ -1459,24 +1453,20 @@ function quickMoveScore(bd, mv, owner) {
           openRoadBonus += opened * AI_MOBILITY_SCALE;
         }
       }
-      break; // 何か駒があったら探索終了
+      break;
     }
   }
 
-  const afterMoves = mv.drop ? rawMoves(tempBd, mv.tr, mv.tc) : after;
-  // 入玉阻止ボーナス：敵の王が中段を越えていたら進行路上への利きに加点
   let entryBlockBonus = 0;
   for(let eo=0; eo<3; eo++){
     if(eo === owner) continue;
     const [ekr, ekc] = findKingOn(bd, eo);
     if(ekr < 0) continue;
-    // 敵王が中段を越えて進軍中か
     const advancing =
       (eo===0 && ekr <= 4) ||
       (eo===1 && ekr >= 4) ||
       (eo===2 && ekc <= 4);
     if(!advancing) continue;
-    // 王の進行路上のマスを列挙（前方3列）
     const pathSquares = new Set();
     if(eo===0){
       for(let r=0; r<ekr; r++) for(let dc=-1;dc<=1;dc++){
@@ -1491,20 +1481,19 @@ function quickMoveScore(bd, mv, owner) {
         const r=ekr+dr; if(r>=0&&r<9) pathSquares.add(r+','+c);
       }
     }
-    // 移動後の利きが進行路に届いているマス数をカウント
-    const covered = afterMoves.filter(([r,c]) => pathSquares.has(r+','+c)).length;
+    const covered = after.filter(([r,c]) => pathSquares.has(r+','+c)).length;
     if(covered > 0){
       const dist = eo===0 ? ekr : eo===1 ? 8-ekr : ekc;
       entryBlockBonus += covered * Math.max(1, 5-dist) * AI_ENTRY_MULT * AI_ENTRY_BLOCK_RATE;
     }
   }
 
-  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus + entryBlockBonus;
+  return (mv.pro ? 20 : 0) + mobilityDelta + openRoadBonus + entryBlockBonus + escapBonus - dangerPenalty;
 }
 
 
 // ── 探索（三つ巴=max^n / 共闘=パラノイド） ──
-function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth, t0=0, timeLimit=Infinity){
+function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth, t0=0, timeLimit=Infinity, callerPlayer=-1, callerAlpha=-Infinity){
 
   if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
     if(cpuCollusion) return evalStatic(bd, hd, elim, rootAI);
@@ -1524,8 +1513,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
     } else {
       isHuman = turnPlayer === humanPlayer;
     }
-    let moves = allMovesOn(bd, hd, turnPlayer, elim);
-    moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
+    let {moves, attackedBy} = allMovesOn(bd, hd, turnPlayer, elim);
+    moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer,attackedBy) - quickMoveScore(bd,a,turnPlayer,attackedBy));
     // 深いノードほど候補を絞る（root側は多く、葉側は少なく）
     const slicedC = moves.slice(0, candsForDepth(depth, maxDepth));
     const entryMvsC = moves.filter(mv =>
@@ -1603,8 +1592,8 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
   // ── 三つ巴：max^n（生スコアを返し、各ノードが自分視点で解釈）──
   {
     const alive = [0,1,2].filter(o=>!elim[o]);
-    let moves = allMovesOn(bd, hd, turnPlayer, elim);
-    moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer) - quickMoveScore(bd,a,turnPlayer));
+    let {moves, attackedBy} = allMovesOn(bd, hd, turnPlayer, elim);
+    moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer,attackedBy) - quickMoveScore(bd,a,turnPlayer,attackedBy));
     const sliced = moves.slice(0, candsForDepth(depth, maxDepth));
     const entryMvs = moves.filter(mv =>
       !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
@@ -1634,19 +1623,30 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       }
       const nxt = nextAliveOn(elim, turnPlayer);
       const childPV = pvArr ? [] : null;
-      const {raw: childRaw, alive: childAlive} = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit);
+      // 子ノードへ：自分（turnPlayer）を呼び出し元として渡し、自分のbestScoreForMeを下限として渡す
+      const {raw: childRaw, alive: childAlive} = minimaxRound(
+        bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit,
+        turnPlayer, bestScoreForMe
+      );
       undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
 
-      // 自分視点でchildRawを解釈して最善手を選ぶ
+      // 自分視点で解釈して最善手を更新
       const scoreForMe = calcWeightedScore(childRaw, childAlive, turnPlayer);
       if(scoreForMe > bestScoreForMe){
         bestScoreForMe = scoreForMe;
         bestRaw = {raw: childRaw, alive: childAlive};
         if(pvArr){ pvArr.length=0; pvArr.push({...mv,pvPiece,pvPr,pvOwner:turnPlayer},...(childPV||[])); }
       }
+
+      // α-β枝刈り：親視点で「このノードはどうせ選ばれない」なら打ち切り
+      // callerPlayerの視点でのbestがcallerAlpha以下 → 親はすでに別の手で better を持っている
+      if(callerPlayer >= 0 && bestRaw){
+        const scoreForCaller = calcWeightedScore(bestRaw.raw, bestRaw.alive, callerPlayer);
+        if(scoreForCaller <= callerAlpha) break;
+      }
+
       if(t0 && performance.now() - t0 >= timeLimit) break;
     }
-    // bestRawをそのまま返す（親ノードが親の視点で再解釈する）
     return bestRaw ?? evalRawMaxN(bd, hd, elim);
   }
 }
@@ -1677,12 +1677,11 @@ function kingWouldBeCaptured(bd, o, elim){
 function aiMove(o,bd,hd,elim){
   evalStaticCount = 0;
   const t0 = performance.now();
-  let moves=allMovesOn(bd,hd,o,elim);
+  let {moves, attackedBy: rootAttackedBy}=allMovesOn(bd,hd,o,elim);
 
   if(!moves.length) return null;
 
-  // 全手を同列にソートしてslice（打ち駒も盤上の手も公平に候補入り）
-  moves.sort((a,b) => quickMoveScore(bd,b,o) - quickMoveScore(bd,a,o));
+  moves.sort((a,b) => quickMoveScore(bd,b,o,rootAttackedBy) - quickMoveScore(bd,a,o,rootAttackedBy));
 
   // 王手回避手をsliceで落とさないよう先に分離して保護
   const evasions = moves.filter(mv => {
@@ -1714,7 +1713,7 @@ function aiMove(o,bd,hd,elim){
 
   // ── 反復深化（人間対局=時間制限、自己対局=深さ制限） ──
   const useTimeLimit = !selfPlayMode;
-  const timeLimit = AI_TIME_LIMIT_MS;
+  const timeLimit = AI_TIME_LIMIT_MS - 200; // 200msバッファ
   const depthLimit = selfPlayMode ? AI_SEARCH_DEPTH : AI_MAX_DEPTH;
 
   let orderedCands = candidates.slice();
