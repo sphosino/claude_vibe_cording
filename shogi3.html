@@ -1090,7 +1090,6 @@ function pieceScores(b, h, owners) {
 
 // root=全手探索、それ以下=candsDeep固定
 function candsForDepth(depth, maxDepth){
-  if(depth === maxDepth) return Infinity; // rootは全手探索
   return AI_MOVE_CANDIDATES_DEEP;
 }
 
@@ -1098,22 +1097,37 @@ function candsForDepth(depth, maxDepth){
 // isEnemy(a, b): プレイヤーaとbが敵対関係かどうかを返す関数
 //   三つ巴モード: (a, b) => a !== b
 //   共闘モード:   (a, b) => (a === hu) !== (b === hu)
-function calcStats(b, isEnemy){
+function calcStats(b, isEnemy, ab){
+  const attackedBy = ab || gAttackedBy;
   const moves = [new Set(), new Set(), new Set()];
-  const attackedBy = {};
 
-  // 全駒の利きを1回のスキャンで収集（attackedByはrawMoves内で直接カウント）
+  // mobilityのみrawMovesで収集（attackedByはgAttackedByを流用）
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
     if(!cell) continue;
-    rawMoves(b, r, c, attackedBy).forEach(([dr,dc])=>{
+    rawMoves(b, r, c).forEach(([dr,dc])=>{
       moves[cell.o].add(dr*9+dc);
     });
   }
 
-  // SEE的な脅威計算
-  // 守りなし → フルペナルティ
-  // 守りあり → 攻撃駒が高価なほど取りにくい → 脅威を軽減（最低0.1倍）
+  // SEE的な脅威計算（gAttackedByを使い全盤スキャン不要）
+  // 各マスの最小攻撃駒価値テーブルを1パスで構築
+  const minAttacker = {}; // key → {val, owner}[]  敵プレイヤー別最安値
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    const cell = b[r][c];
+    if(!cell) continue;
+    const key = r*9+c;
+    const pv = PV[cell.p] || 0;
+    // このマスの駒が利いている先のキーへ最安値を登録
+    rawMoves(b, r, c).forEach(([dr,dc])=>{
+      const k = dr*9+dc;
+      if(!minAttacker[k]) minAttacker[k] = {};
+      const o = cell.o;
+      if(minAttacker[k][o] === undefined || pv < minAttacker[k][o])
+        minAttacker[k][o] = pv;
+    });
+  }
+
   const mobility = [0, 0, 0];
   const threat   = [0, 0, 0];
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
@@ -1126,27 +1140,19 @@ function calcStats(b, isEnemy){
 
     const myVal = PV[cell.p] || 0;
 
-    // 攻撃してくる敵の最小駒価値
+    // 敵の最小攻撃駒価値（minAttackerテーブルから直接引く）
     let minAttackerVal = Infinity;
     for(const eo of attackedBy[key]){
       if(!isEnemy(eo, o)) continue;
-      for(let er=0;er<9;er++) for(let ec=0;ec<9;ec++){
-        const ac = b[er][ec];
-        if(!ac || ac.o !== eo) continue;
-        if(rawMoves(b,er,ec).some(([mr,mc])=>mr===r&&mc===c))
-          minAttackerVal = Math.min(minAttackerVal, PV[ac.p]||0);
-      }
+      const v = minAttacker[key]?.[eo];
+      if(v !== undefined && v < minAttackerVal) minAttackerVal = v;
     }
     if(minAttackerVal === Infinity) continue;
 
-    // 味方が守っているか
-    const isGuarded = [...(attackedBy[key]||[])].some(ao => !isEnemy(ao, o));
-
-    // 守りあり：攻撃駒が高価なほど取りにくい → 軽減（最低0.1倍）
+    const isGuarded = [...attackedBy[key]].some(ao => !isEnemy(ao, o));
     const guardRatio = isGuarded
       ? Math.max(0.1, 1 - minAttackerVal / (myVal + minAttackerVal))
       : 1.0;
-
     threat[o] += myVal * AI_THREAT_SCALE * guardRatio;
   }
   for(let o=0;o<3;o++) mobility[o] = moves[o].size;
@@ -1757,9 +1763,10 @@ function aiMove(o,bd,hd,elim){
     ((o===0 && mv.tr===0) || (o===1 && mv.tr===8) || (o===2 && mv.tc===0))
   );
 
+  const rootCands = Math.max(AI_MOVE_CANDIDATES_DEEP, Math.ceil(moves.length * 0.8));
   const baseCands = inCheck
     ? (evasions.length ? evasions : moves)
-    : moves.slice(0, AI_MOVE_CANDIDATES_DEEP);
+    : moves.slice(0, rootCands);
 
   // 入玉手をcandidatesに追加（重複除去）
   const candSet = new Set(baseCands.map(m => `${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
@@ -1956,7 +1963,11 @@ function handleClick(e){
 
   if(editMode){ editHandleClick(e); return; }
   if(promoQ){handlePromoClick(mx,my);return;}
-  if(gover||turn!==humanPlayer) return;
+  if(gover||turn!==humanPlayer){
+    // 自分の番以外のクリックは選択状態をリセットして無視
+    selected=null; vmoves=[]; selHand=false;
+    return;
+  }
 
   const bc=xyToBoard(mx,my);
   const hi=xyToHand0(mx,my);
