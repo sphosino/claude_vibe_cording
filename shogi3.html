@@ -314,8 +314,8 @@ let AI_MOBILITY_MULT        = DIFFICULTY_LEVELS.normal.mobilityMult;
 let AI_TIME_LIMIT_MS        = DIFFICULTY_LEVELS.normal.timeMs; // 人間対局時の思考時間制限
 
 // ── AI評価関数定数 ──
-const AI_MOBILITY_SCALE      = 15;    // モビリティ1マスあたりの点数
-const AI_THREAT_SCALE        = 0.6;   // 敵駒への脅威ボーナス係数（捕獲価値 × この値）
+const AI_MOBILITY_SCALE      = 10;    // モビリティ1マスあたりの点数
+const AI_DANGER_SCALE        = 0.6;   // 狙われている駒へのペナルティ係数（駒価値 × この値）
 const AI_ENTRY_MULT          = 450;   // 入玉距離ボーナス係数（2段目≒3150点、3段目≒450点）
 const AI_ENTRY_BLOCK_RATE    = 0.03;  // 入玉阻止ボーナス係数 ※大きすぎると詰め手より阻止利きを優先して千日手になる
 const AI_KING_SAFETY_MULT    = 1000;  // 王安全度スコア係数
@@ -338,6 +338,8 @@ const AI_SKIP_DELAY_MS = 800;  // スキップ時の待機(ms)
 
 let evalStaticCount = 0; // パフォーマンス計測用（perf表示）
 let allMovesCount   = 0; // 合法手生成呼び出し回数
+let pruneCount      = 0; // 枝刈り発生回数
+let slicedCount     = 0; // slice除外手数
 
 // ── 駒の価値・名前テーブル ──
 const PV  = {FU:100, KY:300, KE:350, GIN:400, KIN:500, KAKU:800, HI:900, OU:10000000};
@@ -483,7 +485,7 @@ function kickAI(){
   if(gover) return;
   // 通常モード: humanPlayerのターンはスキップ
   if(!selfPlayMode && turn===humanPlayer) return;
-  const showBoard = !selfPlayMode || currentDifficulty==='normal' || currentDifficulty==='hard';
+  const showBoard = !selfPlayMode || true;
   setStatus(pName(turn)+'が考え中...');
   if(showBoard) render();
   const _g=gameGen;
@@ -749,8 +751,10 @@ function rawMoves(bd,r,c,attackedBy){
     res.push([nr,nc]);
     if(attackedBy){
       const key=nr*9+nc;
-      if(!attackedBy[key]) attackedBy[key]=new Set();
-      attackedBy[key].add(o);
+      if(!attackedBy[key]) attackedBy[key]=new Map();
+      const pv=PV[p]||0;
+      const cur=attackedBy[key].get(o);
+      attackedBy[key].set(o, cur===undefined ? pv : Math.min(cur, pv));
     }
   };
 
@@ -1079,7 +1083,7 @@ function pieceScores(b, h, owners) {
   owners.forEach(o => scoresMap[o] = 0);
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
-    if(cell && owners.includes(cell.o) && cell.p !== 'OU') // 王は除外
+    if(cell && owners.includes(cell.o) && cell.p !== 'OU')
       scoresMap[cell.o] += (PV[cell.p]||0) + (cell.pr ? (PVP[cell.p]||0) : 0);
   }
   owners.forEach(o => {
@@ -1088,48 +1092,21 @@ function pieceScores(b, h, owners) {
   return owners.map(o => scoresMap[o]);
 }
 
-// root=全手探索、それ以下=candsDeep固定
-function candsForDepth(depth, maxDepth){
-  return AI_MOVE_CANDIDATES_DEEP;
-}
 
 // ── 利き・モビリティ・王安全度を一括計算 ──
 // isEnemy(a, b): プレイヤーaとbが敵対関係かどうかを返す関数
 //   三つ巴モード: (a, b) => a !== b
 //   共闘モード:   (a, b) => (a === hu) !== (b === hu)
-function calcStats(b, isEnemy, ab){
-  const attackedBy = ab || gAttackedBy;
-  const moves = [new Set(), new Set(), new Set()];
+function calcStats(b, isEnemy, attackedBy){
 
-  // mobilityのみrawMovesで収集（attackedByはgAttackedByを流用）
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell = b[r][c];
-    if(!cell) continue;
-    rawMoves(b, r, c).forEach(([dr,dc])=>{
-      moves[cell.o].add(dr*9+dc);
-    });
-  }
-
-  // SEE的な脅威計算（gAttackedByを使い全盤スキャン不要）
-  // 各マスの最小攻撃駒価値テーブルを1パスで構築
-  const minAttacker = {}; // key → {val, owner}[]  敵プレイヤー別最安値
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
-    const cell = b[r][c];
-    if(!cell) continue;
-    const key = r*9+c;
-    const pv = PV[cell.p] || 0;
-    // このマスの駒が利いている先のキーへ最安値を登録
-    rawMoves(b, r, c).forEach(([dr,dc])=>{
-      const k = dr*9+dc;
-      if(!minAttacker[k]) minAttacker[k] = {};
-      const o = cell.o;
-      if(minAttacker[k][o] === undefined || pv < minAttacker[k][o])
-        minAttacker[k][o] = pv;
-    });
-  }
-
+  // mobility: gAttackedByのMapキー数を集計
   const mobility = [0, 0, 0];
-  const threat   = [0, 0, 0];
+  for(const key in attackedBy){
+    for(const o of attackedBy[key].keys()) mobility[o]++;
+  }
+
+  // SEE的な被脅威ペナルティ計算（狙われている駒ほど減点）
+  const danger = [0, 0, 0];
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell = b[r][c];
     if(!cell) continue;
@@ -1139,23 +1116,19 @@ function calcStats(b, isEnemy, ab){
     if(!attackedBy[key]) continue;
 
     const myVal = PV[cell.p] || 0;
-
-    // 敵の最小攻撃駒価値（minAttackerテーブルから直接引く）
     let minAttackerVal = Infinity;
-    for(const eo of attackedBy[key]){
+    for(const [eo, minVal] of attackedBy[key]){
       if(!isEnemy(eo, o)) continue;
-      const v = minAttacker[key]?.[eo];
-      if(v !== undefined && v < minAttackerVal) minAttackerVal = v;
+      if(minVal < minAttackerVal) minAttackerVal = minVal;
     }
     if(minAttackerVal === Infinity) continue;
 
-    const isGuarded = [...attackedBy[key]].some(ao => !isEnemy(ao, o));
+    const isGuarded = [...attackedBy[key].keys()].some(ao => !isEnemy(ao, o));
     const guardRatio = isGuarded
       ? Math.max(0.1, 1 - minAttackerVal / (myVal + minAttackerVal))
       : 1.0;
-    threat[o] += myVal * AI_THREAT_SCALE * guardRatio;
+    danger[o] += myVal * AI_DANGER_SCALE * guardRatio;
   }
-  for(let o=0;o<3;o++) mobility[o] = moves[o].size;
 
   // 王安全度計算
   const kingSafety = [0, 0, 0];
@@ -1175,22 +1148,24 @@ function calcStats(b, isEnemy, ab){
       total += w;
       const key = nr*9+nc;
       const cell = b[nr][nc];
-      if((cell && !isEnemy(cell.o, o)) || allyCover.some(a => moves[a].has(key))) covered += w;
+      const isAllyCovered = (cell && !isEnemy(cell.o, o)) ||
+        allyCover.some(a => attackedBy[key]?.has(a));
+      if(isAllyCovered) covered += w;
       if(attackedBy[key]){
-        for(const eo of attackedBy[key]){ if(isEnemy(eo, o)){ danger += w; break; } }
+        for(const eo of attackedBy[key].keys()){ if(isEnemy(eo, o)){ danger += w; break; } }
       }
     }
     const safety = total > 0 ? covered / Math.pow(total, AI_KING_SAFETY_DENOM_EXP) : 0;
     kingSafety[o] = safety - danger * AI_KING_SAFETY_DANGER;
   }
 
-  return {mobility, threat, kingSafety};
+  return {mobility, danger, kingSafety};
 }
 
 // 三つ巴用（全員が互いに敵）
-function calcAllStats(b){ return calcStats(b, (a,b)=>a!==b); }
+function calcAllStats(b, ab){ return calcStats(b, (a,b)=>a!==b, ab); }
 // 共闘モード用（CPU同士は味方）
-function calcCollusionStats(b, hu){ return calcStats(b, (a,b)=>(a===hu)!==(b===hu)); }
+function calcCollusionStats(b, hu, ab){ return calcStats(b, (a,b)=>(a===hu)!==(b===hu), ab); }
 
 function calcEntryBonus(b, o){
   const [kr,kc] = findKingOn(b, o);
@@ -1205,14 +1180,9 @@ function calcEntryBonus(b, o){
 function calcRawScores(b, h, elim){
   const alive = [0,1,2].filter(o=>!elim[o]);
   const pieceScore = pieceScores(b, h, [0,1,2]);
-  const {mobility, threat, kingSafety} = calcAllStats(b);
   const raw = {};
   alive.forEach(o=>{
-    raw[o] = pieceScore[o]
-           + mobility[o]   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-           - threat[o]     * AI_MOBILITY_MULT  // 狙われている駒の価値分を減点
-           + kingSafety[o] * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
-           + calcEntryBonus(b, o);
+    raw[o] = pieceScore[o] + calcEntryBonus(b, o);
   });
   return {raw, alive};
 }
@@ -1287,26 +1257,16 @@ function evalStatic(b, h, elim, vp){
   // ── 共闘モード ──
   const pieceScore = pieceScores(b, h, [0,1,2]);
   const humanIsElim = elim[humanPlayer];
-  const {mobility, threat, kingSafety} = humanIsElim
-    ? calcAllStats(b)
-    : calcCollusionStats(b, humanPlayer);
 
   if(humanIsElim){
     const c1=alive[0], c2=alive[1];
     let score = pieceScore[c1] - pieceScore[c2]
-              + (mobility[c1]   - mobility[c2])   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-              - (threat[c1]     - threat[c2])     * AI_MOBILITY_MULT  // c1が狙われてたら減点
-              + (kingSafety[c1] - kingSafety[c2]) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT
               + calcEntryBonus(b,c1) - calcEntryBonus(b,c2);
     return vp === c1 ? score : -score;
   } else {
     const hu = humanPlayer;
     const liveCpus = alive.filter(o=>o!==hu);
     let score = pieceScore.reduce((acc, cur, i) => acc + (i === hu ? -cur : cur), 0);
-    const sumCpu = (arr) => liveCpus.reduce((s,c) => s + arr[c], 0);
-    score += (sumCpu(mobility)   - mobility[hu])   * AI_MOBILITY_MULT * AI_MOBILITY_SCALE
-           - (sumCpu(threat)     - threat[hu])     * AI_MOBILITY_MULT  // CPUが狙われてたら減点
-           + (sumCpu(kingSafety) - kingSafety[hu]) * AI_MOBILITY_MULT * AI_KING_SAFETY_MULT;
     liveCpus.forEach(cpu => score += calcEntryBonus(b, cpu));
     return score;
   }
@@ -1314,91 +1274,30 @@ function evalStatic(b, h, elim, vp){
 
 // ── インクリメンタル attackedBy (GAB) ──
 // 影響キーだけ保存・復元するundo方式（全コピー不要）
-let gAttackedBy = {};
+let gAttackedBy = {}; // quickMoveScore用（rootのみ使用）
 
-function initGAB(bd){
-  gAttackedBy = {};
-  for(let r=0;r<9;r++) for(let c=0;c<9;c++)
-    if(bd[r][c]) rawMoves(bd, r, c, gAttackedBy);
-}
-
-function gabRemove(bd, r, c){
-  const cell = bd[r][c];
-  if(!cell) return;
-  rawMoves(bd, r, c).forEach(([dr,dc])=>{
-    const key = dr*9+dc;
-    if(!gAttackedBy[key]) return;
-    gAttackedBy[key].delete(cell.o);
-    if(!gAttackedBy[key].size) delete gAttackedBy[key];
-  });
-}
-
-function gabAdd(bd, r, c){
-  if(bd[r]?.[c]) rawMoves(bd, r, c, gAttackedBy);
-}
-
-const _GAB_SLIDE = new Set(['HI','KAKU','RYU','UMA','KY']);
-const _GAB_DIRS8 = [[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[-1,1],[1,-1],[1,1]];
-
-function gabFindSlides(bd, r, c){
-  const slides = [];
-  for(const [dr,dc] of _GAB_DIRS8){
-    let nr=r+dr, nc=c+dc;
-    while(nr>=0&&nr<9&&nc>=0&&nc<9){
-      const cell=bd[nr][nc];
-      if(cell){ if(_GAB_SLIDE.has(cell.p)) slides.push([nr,nc]); break; }
-      nr+=dr; nc+=dc;
-    }
+// ── attackedBy フルスキャン ──
+// 毎回全駒スキャンで構築（シンプル・正確）
+function buildAttackedBy(bd){
+  const ab = {};
+  for(let r=0;r<9;r++) for(let c=0;c<9;c++){
+    if(!bd[r][c]) continue;
+    rawMoves(bd, r, c).forEach(([dr,dc])=>{
+      const k = dr*9+dc;
+      if(!ab[k]) ab[k] = new Map();
+      const o = bd[r][c].o, pv = PV[bd[r][c].p]||0;
+      const cur = ab[k].get(o);
+      ab[k].set(o, cur===undefined ? pv : Math.min(cur, pv));
+    });
   }
-  return slides;
+  return ab;
 }
 
-// apply前：影響キーの現在値だけ保存して寄与を削除
-// 戻り値のsavedをgabRestoreに渡すとundo可能
-function gabApply(bd, mv){
-  const affected = new Set();
-  if(!mv.drop){
-    affected.add(mv.fr*9+mv.fc);
-    gabFindSlides(bd, mv.fr, mv.fc).forEach(([r,c])=>affected.add(r*9+c));
-  }
-  if(bd[mv.tr]?.[mv.tc]) affected.add(mv.tr*9+mv.tc);
-  gabFindSlides(bd, mv.tr, mv.tc).forEach(([r,c])=>affected.add(r*9+c));
-
-  const toSave = new Set(affected);
-  toSave.add(mv.tr*9+mv.tc);
-  if(!mv.drop) gabFindSlides(bd, mv.fr, mv.fc).forEach(([r,c])=>toSave.add(r*9+c));
-  gabFindSlides(bd, mv.tr, mv.tc).forEach(([r,c])=>toSave.add(r*9+c));
-
-  const saved = {};
-  toSave.forEach(k=>{
-    saved[k] = gAttackedBy[k] ? new Set(gAttackedBy[k]) : null;
-  });
-
-  affected.forEach(k=>{ gabRemove(bd, k/9|0, k%9); });
-  return {affected, saved};
-}
-
-function gabAfter(bd, mv, affected){
-  const toAdd = new Set(affected);
-  toAdd.add(mv.tr*9+mv.tc);
-  if(!mv.drop) gabFindSlides(bd, mv.fr, mv.fc).forEach(([r,c])=>toAdd.add(r*9+c));
-  gabFindSlides(bd, mv.tr, mv.tc).forEach(([r,c])=>toAdd.add(r*9+c));
-  toAdd.forEach(k=>{ gabAdd(bd, k/9|0, k%9); });
-}
-
-function gabRestore(saved){
-  for(const k in saved){
-    if(saved[k] === null) delete gAttackedBy[k];
-    else gAttackedBy[k] = saved[k];
-  }
-}
-
-// 合法手生成（盤面引数版）
-function allMovesOn(bd,hd,o,elim){
-  if(elim[o]) return {moves:[], attackedBy: gAttackedBy};
+// 合法手生成（手のみ・内部ノード用）
+function movesOnly(bd,hd,o,elim){
+  if(elim[o]) return [];
   allMovesCount++;
   const res=[];
-  // プレイヤーoの駒だけスキャン（attackedByはgAttackedByを使用）
   for(let r=0;r<9;r++) for(let c=0;c<9;c++){
     const cell=bd[r][c]; if(!cell||cell.o!==o) continue;
     const dests=rawMoves(bd,r,c);
@@ -1434,7 +1333,15 @@ function allMovesOn(bd,hd,o,elim){
       res.push({fr:-1,fc:-1,tr:r,tc:c,piece,pro:false,drop:true});
     }
   });
-  return {moves:res, attackedBy: gAttackedBy};
+  return res;
+}
+
+// 合法手生成（root用・attackedBy付き）
+function allMovesOn(bd,hd,o,elim){
+  const moves = movesOnly(bd,hd,o,elim);
+  const attackedBy = buildAttackedBy(bd);
+  gAttackedBy = attackedBy;
+  return {moves, attackedBy};
 }
 
 // elim配列を使った次の生存プレイヤー取得
@@ -1452,7 +1359,7 @@ function quickMoveScore(bd, mv, owner, attackedBy={}) {
   const isDanger = (r, c, o) => {
     const key = r*9+c;
     if(!attackedBy[key]) return false;
-    return [...attackedBy[key]].some(eo => eo !== o);
+    return [...attackedBy[key].keys()].some(eo => eo !== o);
   };
 
   if(mv.drop){
@@ -1462,7 +1369,7 @@ function quickMoveScore(bd, mv, owner, attackedBy={}) {
     const dests = rawMoves(tempBd, mv.tr, mv.tc);
     const mobilityGain = dests.length * AI_MOBILITY_SCALE;
     const myVal = PV[mv.piece] || 0;
-    const dangerPenalty = isDanger(mv.tr, mv.tc, owner??-1) ? myVal * AI_THREAT_SCALE : 0;
+    const dangerPenalty = isDanger(mv.tr, mv.tc, owner??-1) ? myVal * AI_DANGER_SCALE : 0;
     const handCost = myVal * AI_QMS_HAND_COST;
     return mobilityGain - dangerPenalty - handCost;
   }
@@ -1480,8 +1387,8 @@ function quickMoveScore(bd, mv, owner, attackedBy={}) {
   const mobilityDelta = (after.length - before) * AI_MOBILITY_SCALE;
 
   const myVal = PV[piece.p] || 0;
-  const escapBonus    = isDanger(mv.fr, mv.fc, piece.o) ? myVal * AI_THREAT_SCALE : 0;
-  const dangerPenalty = isDanger(mv.tr, mv.tc, piece.o) ? myVal * AI_THREAT_SCALE : 0;
+  const escapBonus    = isDanger(mv.fr, mv.fc, piece.o) ? myVal * AI_DANGER_SCALE : 0;
+  const dangerPenalty = isDanger(mv.tr, mv.tc, piece.o) ? myVal * AI_DANGER_SCALE : 0;
 
   // 角道・飛車道を開けるボーナス
   let openRoadBonus = 0;
@@ -1550,7 +1457,7 @@ function quickMoveScore(bd, mv, owner, attackedBy={}) {
 }
 
 // ── 探索（三つ巴=max^n / 共闘=パラノイド） ──
-function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth, t0=0, timeLimit=Infinity, callerPlayer=-1, callerAlpha=-Infinity){
+function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth, t0=0, timeLimit=Infinity, callerPlayer=-1, callerAlpha=-Infinity, sliceRate=0){
 
   if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
     if(cpuCollusion) return evalStatic(bd, hd, elim, rootAI);
@@ -1570,51 +1477,51 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
     } else {
       isHuman = turnPlayer === humanPlayer;
     }
-    let {moves, attackedBy} = allMovesOn(bd, hd, turnPlayer, elim);
+    let moves = movesOnly(bd, hd, turnPlayer, elim); const attackedBy = {};
     moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer,attackedBy) - quickMoveScore(bd,a,turnPlayer,attackedBy));
-    // 深いノードほど候補を絞る（root側は多く、葉側は少なく）
-    const slicedC = moves.slice(0, candsForDepth(depth, maxDepth));
+    const slicedC = sliceRate > 0 ? moves.slice(0, Math.max(1, Math.ceil(moves.length * (1 - sliceRate)))) : moves; slicedCount += moves.length - slicedC.length;
+
     const entryMvsC = moves.filter(mv =>
       !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
       ((turnPlayer===0&&mv.tr===0)||(turnPlayer===1&&mv.tr===8)||(turnPlayer===2&&mv.tc===0))
     );
-    // 銀以上（400点以上）の駒を取る手は必ず候補に含める（slice落ちによる評価ミス防止）
+    // 全駒取り手を必ず候補に含める（slice落ち・枝刈り防止のためリスト先頭に配置）
     const captureMvsC = moves.filter(mv =>
-      !mv.drop && bd[mv.tr]?.[mv.tc] && bd[mv.tr][mv.tc].o !== turnPlayer &&
-      (PV[bd[mv.tr][mv.tc].p] || 0) >= PV['GIN']
+      !mv.drop && bd[mv.tr]?.[mv.tc] && bd[mv.tr][mv.tc].o !== turnPlayer
     );
+    const capSetC = new Set(captureMvsC.map(m=>`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
     const slicedSetC = new Set(slicedC.map(m=>`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
-    moves = slicedC
-      .concat(entryMvsC .filter(m=>!slicedSetC.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)))
-      .concat(captureMvsC.filter(m=>!slicedSetC.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)));
+    moves = captureMvsC
+      .concat(slicedC  .filter(m=>!capSetC.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)))
+      .concat(entryMvsC.filter(m=>!capSetC.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)));
 
     if(isHuman){
       let best = Infinity;
       for(const mv of moves){
         const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
         const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
-        const {affected: rk, saved: sv} = gabApply(bd, mv);
+
         const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
-        gabAfter(bd, mv, rk);
+
         if(undo.tryWin){
           const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
           if(safe){
             const score = evalStatic(bd, hd, elim, rootAI); // 玉取り後の局面を正規評価
-            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv);
+            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
             return score;
           }
           // 利きあり入玉→通常評価へ
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const childPV = pvArr ? [] : null;
-        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit);
-        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv);
+        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit, -1, -Infinity, sliceRate);
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
         if(score < best){
           best = score;
           if(pvArr){ pvArr.length=0; pvArr.push({...mv,pvPiece,pvPr,pvOwner:turnPlayer},...(childPV||[])); }
         }
         beta = Math.min(beta, score);
-        if(beta <= alpha) break;
+        pruneCount++; if(beta <= alpha) break;
         if(t0 && performance.now() - t0 >= timeLimit) break;
       }
       return best;
@@ -1623,27 +1530,27 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       for(const mv of moves){
         const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
         const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
-        const {affected: rk2, saved: sv2} = gabApply(bd, mv);
+
         const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
-        gabAfter(bd, mv, rk2);
+
         if(undo.tryWin){
           const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
           if(safe){
             const score = evalStatic(bd, hd, elim, rootAI);
-            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv2);
+            undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
             return score;
           }
         }
         const nxt = nextAliveOn(elim, turnPlayer);
         const childPV = pvArr ? [] : null;
-        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit);
-        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv2);
+        const score = minimaxRound(bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit, -1, -Infinity, sliceRate);
+        undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
         if(score > best){
           best = score;
           if(pvArr){ pvArr.length=0; pvArr.push({...mv,pvPiece,pvPr,pvOwner:turnPlayer},...(childPV||[])); }
         }
         alpha = Math.max(alpha, score);
-        if(beta <= alpha) break;
+        pruneCount++; if(beta <= alpha) break;
         if(t0 && performance.now() - t0 >= timeLimit) break;
       }
       return best;
@@ -1653,34 +1560,36 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
   // ── 三つ巴：max^n（生スコアを返し、各ノードが自分視点で解釈）──
   {
     const alive = [0,1,2].filter(o=>!elim[o]);
-    let {moves, attackedBy} = allMovesOn(bd, hd, turnPlayer, elim);
+    let moves = movesOnly(bd, hd, turnPlayer, elim); const attackedBy = {};
     moves.sort((a,b) => quickMoveScore(bd,b,turnPlayer,attackedBy) - quickMoveScore(bd,a,turnPlayer,attackedBy));
-    const sliced = moves.slice(0, candsForDepth(depth, maxDepth));
+    const sliced = sliceRate > 0 ? moves.slice(0, Math.max(1, Math.ceil(moves.length * (1 - sliceRate)))) : moves; slicedCount += moves.length - sliced.length;
+
     const entryMvs = moves.filter(mv =>
       !mv.drop && bd[mv.fr]?.[mv.fc]?.p === 'OU' &&
       ((turnPlayer===0 && mv.tr===0)||(turnPlayer===1 && mv.tr===8)||(turnPlayer===2 && mv.tc===0))
     );
+    // 全駒取り手を必ず候補に含める（slice落ち・枝刈り防止のためリスト先頭に配置）
     const captureMvs = moves.filter(mv =>
-      !mv.drop && bd[mv.tr]?.[mv.tc] && bd[mv.tr][mv.tc].o !== turnPlayer &&
-      (PV[bd[mv.tr][mv.tc].p] || 0) >= PV['GIN']
+      !mv.drop && bd[mv.tr]?.[mv.tc] && bd[mv.tr][mv.tc].o !== turnPlayer
     );
+    const capSet = new Set(captureMvs.map(m=>`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
     const slicedSet = new Set(sliced.map(m=>`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
-    moves = sliced
-      .concat(entryMvs .filter(m=>!slicedSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)))
-      .concat(captureMvs.filter(m=>!slicedSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)));
+    moves = captureMvs
+      .concat(sliced  .filter(m=>!capSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)))
+      .concat(entryMvs.filter(m=>!capSet.has(`${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`)));
 
     let bestRaw = null, bestScoreForMe = -Infinity;
     for(const mv of moves){
       const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
       const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
-      const {affected: rk3, saved: sv3} = gabApply(bd, mv);
+
       const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
-      gabAfter(bd, mv, rk3);
+
       if(undo.tryWin){
         const safe = !undo.entryWin || !squareAttackedBy(bd,mv.tr,mv.tc,turnPlayer,elim);
         if(safe){
           const {raw: r, alive: al} = evalRawMaxN(bd, hd, elim);
-          undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv3);
+          undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
           return {raw: r, alive: al};
         }
       }
@@ -1689,9 +1598,9 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       // 子ノードへ：自分（turnPlayer）を呼び出し元として渡し、自分のbestScoreForMeを下限として渡す
       const {raw: childRaw, alive: childAlive} = minimaxRound(
         bd, hd, elim, depth-1, alpha, beta, nxt, rootAI, childPV, maxDepth, t0, timeLimit,
-        turnPlayer, bestScoreForMe
+        turnPlayer, bestScoreForMe, sliceRate
       );
-      undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo); gabRestore(sv3);
+      undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
 
       // 自分視点で解釈して最善手を更新
       const scoreForMe = calcWeightedScore(childRaw, childAlive, turnPlayer);
@@ -1705,7 +1614,7 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       // callerPlayerの視点でのbestがcallerAlpha以下 → 親はすでに別の手で better を持っている
       if(callerPlayer >= 0 && bestRaw){
         const scoreForCaller = calcWeightedScore(bestRaw.raw, bestRaw.alive, callerPlayer);
-        if(scoreForCaller <= callerAlpha) break;
+        pruneCount++; if(scoreForCaller <= callerAlpha) break;
       }
 
       if(t0 && performance.now() - t0 >= timeLimit) break;
@@ -1740,7 +1649,9 @@ function kingWouldBeCaptured(bd, o, elim){
 function aiMove(o,bd,hd,elim){
   evalStaticCount = 0;
   allMovesCount   = 0;
-  initGAB(bd);
+  pruneCount      = 0;
+  slicedCount     = 0;
+
   const t0 = performance.now();
   let {moves, attackedBy: rootAttackedBy}=allMovesOn(bd,hd,o,elim);
 
@@ -1763,10 +1674,9 @@ function aiMove(o,bd,hd,elim){
     ((o===0 && mv.tr===0) || (o===1 && mv.tr===8) || (o===2 && mv.tc===0))
   );
 
-  const rootCands = Math.max(AI_MOVE_CANDIDATES_DEEP, Math.ceil(moves.length * 0.8));
   const baseCands = inCheck
     ? (evasions.length ? evasions : moves)
-    : moves.slice(0, rootCands);
+    : moves; // rootは全候補
 
   // 入玉手をcandidatesに追加（重複除去）
   const candSet = new Set(baseCands.map(m => `${m.fr},${m.fc},${m.tr},${m.tc},${m.pro?1:0},${m.drop?m.piece:''}`));
@@ -1785,6 +1695,7 @@ function aiMove(o,bd,hd,elim){
   let orderedCands = candidates.slice();
   let lastCompleteResults = null;
   let reachedDepth = 0;
+  const depthTimes = []; // 各depth完了時の経過ms
 
   for(let d = 1; d <= depthLimit; d++){
     // 時間切れチェック（depth=1は必ず完了させる）
@@ -1793,7 +1704,10 @@ function aiMove(o,bd,hd,elim){
     const iterResults = [];
     let timedOut = false;
 
-    for(const mv of orderedCands){
+    for(let mvIdx=0; mvIdx < orderedCands.length; mvIdx++){
+      const mv = orderedCands[mvIdx];
+      // rank別sliceRate: rank1-2=0%, rank3-4=10%, rank5-6=20%, ... 最大90%
+      const sliceRate = Math.min(0.9, Math.floor(mvIdx / 2) * 0.1);
       const pvPiece = mv.drop ? mv.piece : (bd[mv.fr]?.[mv.fc]?.p || '?');
       const pvPr = mv.drop ? false : !!(bd[mv.fr]?.[mv.fc]?.pr);
       const undo = applyMoveInPlace(bd, hd, elim, mv, o);
@@ -1805,7 +1719,7 @@ function aiMove(o,bd,hd,elim){
       if(!undo.entryWin && !elim[o] && kingWouldBeCaptured(bd, o, elim)){ undoMoveInPlace(bd, hd, elim, mv, o, undo); continue; }
       const nxt = nextAliveOn(elim, o);
       const childPV = [];
-      const result = minimaxRound(bd, hd, elim, d, -Infinity, Infinity, nxt, o, childPV, d, t0, useTimeLimit ? timeLimit : Infinity);
+      const result = minimaxRound(bd, hd, elim, d, -Infinity, Infinity, nxt, o, childPV, d, t0, useTimeLimit ? timeLimit : Infinity, -1, -Infinity, sliceRate);
       // cpuCollusion=スカラー、maxN={raw,alive}オブジェクト
       const rawV = (result && typeof result === 'object' && result.raw)
         ? calcWeightedScore(result.raw, result.alive, o)
@@ -1830,6 +1744,7 @@ function aiMove(o,bd,hd,elim){
     orderedCands = iterResults.map(r => r.mv);
     lastCompleteResults = iterResults;
     reachedDepth = d;
+    depthTimes.push(`d${d}:${(performance.now()-t0).toFixed(0)}ms`);
   }
 
   // 最後に完了した深さの結果からbest・allResultsを確定
@@ -1845,7 +1760,8 @@ function aiMove(o,bd,hd,elim){
   const perfEl  = document.getElementById('perf-info');
   const thinkEl = document.getElementById('think-panel');
 
-  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]}将 ${elapsed}ms depth:${reachedDepth} / eval:${evalStaticCount} / moves:${allMovesCount}`;
+  if(perfEl) perfEl.textContent = `${['青','赤','緑'][o]}将 ${elapsed}ms depth:${reachedDepth} / eval:${evalStaticCount} / moves:${allMovesCount} / prune:${pruneCount} / slice:${slicedCount}`;
+  console.log(`${['青','赤','緑'][o]}将 ${elapsed}ms  評価回数:${evalStaticCount} / 合法手生成回数:${allMovesCount} / αβ枝刈り数:${pruneCount} / オーダリング順位による枝刈り合計:${slicedCount} depth:${reachedDepth}->[${depthTimes.join(', ')}]`);
 
   if(thinkEl && allResults.length > 0){
     allResults.sort((a,b) => b.score - a.score);
