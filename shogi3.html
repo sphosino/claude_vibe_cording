@@ -311,7 +311,7 @@ let AI_NOISE                = DIFFICULTY_LEVELS.normal.noise;
 let AI_TIME_LIMIT_MS        = DIFFICULTY_LEVELS.normal.timeMs; // 人間対局時の思考時間制限
 
 // ── AI評価関数定数 ──
-const AI_MOBILITY_SCALE      = 10;    // モビリティ1マスあたりの点数
+const AI_MOBILITY_SCALE      = 30;    // モビリティ1マスあたりの点数
 const AI_DANGER_SCALE        = 0.8;   // 狙われている駒へのペナルティ係数（駒価値 × この値）
 const AI_ENTRY_MULT          = 450;   // 入玉距離ボーナス係数（2段目≒3150点、3段目≒450点）
 const AI_ENTRY_BLOCK_RATE    = 0.03;  // 入玉阻止ボーナス係数 ※大きすぎると詰め手より阻止利きを優先して千日手になる
@@ -1721,6 +1721,19 @@ function quickMoveScore(bd, mv, owner, attackedBy={}) {
 }
 
 // ── 探索（三つ巴=max^n / 共闘=パラノイド） ──
+// 2人局面専用：自殺手（指した後に自分の王が取れる手）を除いた合法手リストを返す
+// 3人局面はそのまま返す（漁夫の利などの複雑な判断は3人ロジックに任せる）
+function legalMovesFor2(bd, hd, elim, moves, turnPlayer){
+  const alive = [0,1,2].filter(o=>!elim[o]);
+  if(alive.length !== 2) return moves;
+  return moves.filter(mv => {
+    const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
+    const safe = undo.tryWin || !kingWouldBeCaptured(bd, turnPlayer, elim);
+    undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
+    return safe;
+  });
+}
+
 function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth, t0=0, timeLimit=Infinity, callerPlayer=-1, callerAlpha=-Infinity, sliceRate=0){
 
   if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
@@ -1742,6 +1755,11 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       isHuman = turnPlayer === humanPlayer;
     }
     let moves = movesOnly(bd, hd, turnPlayer, elim);
+    // 2人局面：自殺手フィルタ → 詰みなら即返（3人時は素通し）
+    moves = legalMovesFor2(bd, hd, elim, moves, turnPlayer);
+    if(moves.length === 0 && [0,1,2].filter(o=>!elim[o]).length === 2){
+      return isHuman ? PV['OU'] : -PV['OU'];
+    }
     // ソート方針:
     //   depth=1 かつ sliceRate=0.0（末端直前の全探索）: ソート無意味→スキップ
     //   sliceRate < 0.9（10%超残す）: quickMoveScoreソート（αβ効率化）
@@ -1858,6 +1876,13 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
   {
     const alive = [0,1,2].filter(o=>!elim[o]);
     let moves = movesOnly(bd, hd, turnPlayer, elim);
+    // 2人局面：自殺手フィルタ → 詰みなら大喜びスコアを即返（3人時は素通し）
+    moves = legalMovesFor2(bd, hd, elim, moves, turnPlayer);
+    if(moves.length === 0 && alive.length === 2){
+      const raw2 = {};
+      [0,1,2].forEach(o => raw2[o] = elim[o] ? -PV['OU'] : o===turnPlayer ? -PV['OU'] : PV['OU']);
+      return {raw: raw2, alive};
+    }
     // ソート方針:
     //   depth=1 かつ sliceRate=0.0（末端直前の全探索）: ソート無意味→スキップ
     //   sliceRate < 0.9（10%超残す）: quickMoveScoreソート（αβ効率化）
