@@ -159,14 +159,9 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
     <h3>✦ 特別ルール①：入玉</h3>
     <div>敵陣1段目に玉が踏み込めば<span class="highlight">即勝利！</span>（トライルール）</div>
 
-    <h3 style="margin-top:20px;">✦ 特別ルール②：駒の取得</h3>
-    <div>通常、取った駒は消滅しますが、以下の場合、<span class="highlight">持ち駒</span>にできます。</div>
-    <ul>
-      <li><span class="highlight">脱落したプレイヤーがいる</span>とき</li>
-      <li><span class="highlight">成り駒</span>を取ったとき</li>
-      <li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li>
-      <li><span class="highlight">玉が5段目以上</span>に進んでいる相手から取ったとき</li>
-    </ul>
+    <h3 style="margin-top:20px;">✦ 特別ルール②：取り駒ルール</h3>
+    <div id="keep-rule-desc-main">取った駒は<span class="highlight">常に持ち駒</span>になります。</div>
+    <div style="font-size:12px;color:#b09070;margin-top:4px;">※「消滅あり」に切り替えると、条件を満たさない限り取った駒は消滅します。</div>
 
     <div class="warning" id="collusion-warning">
       ⚠️ <span style="color:#ff4433">CPU①</span>・<span style="color:#33bb55">CPU②</span>は共闘してあなたを狙ってきます。
@@ -239,6 +234,14 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
           <button id="col-off" onclick="setCpuCollusion(false)">⚔ 三つ巴</button>
         </div>
         <div id="col-desc" style="font-size:12px;color:#b09070;text-align:center;min-height:16px;"></div>
+      </div>
+      <!-- 取り駒ルール設定行 -->
+      <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;border-top:1px solid #503010;padding-top:8px;margin-top:4px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;">
+          <span style="color:#ffaa44;font-size:13px;letter-spacing:1px;">取り駒ルール：</span>
+          <button id="keep-on"  onclick="setKeepAllPieces(true)">♟ 常に持ち駒</button>
+          <button id="keep-off" onclick="setKeepAllPieces(false)">💨 消滅あり</button>
+        </div>
       </div>
     </div>
     <div id="sp-panel" style="display:none;background:#0a1a0a;border:1px solid #33bb55;border-radius:8px;padding:12px;margin:8px auto;max-width:540px;text-align:center;font-family:monospace;">
@@ -364,6 +367,7 @@ let viewPlayer  = 0;
 let humanPlayer = 0;
 let humanEliminated = false;
 let cpuCollusion = false;
+let keepAllPieces = true; // true=常に持ち駒（デフォルト）、false=消滅あり
 let gameGen = 0;
 let kifu = [];
 
@@ -727,6 +731,7 @@ function toFugo(mv, o){
 // 修正後：引数で盤面状態を受け取れるようにする
 
 function canKeep(attackerO, victimO, victimPiece,bd,hd, elim){
+  if (keepAllPieces) return true;
   if (elim.some(e=>e)) return true;
   if (victimPiece && victimPiece.pr) return true;
 
@@ -1721,19 +1726,6 @@ function quickMoveScore(bd, mv, owner, attackedBy={}) {
 }
 
 // ── 探索（三つ巴=max^n / 共闘=パラノイド） ──
-// 2人局面専用：自殺手（指した後に自分の王が取れる手）を除いた合法手リストを返す
-// 3人局面はそのまま返す（漁夫の利などの複雑な判断は3人ロジックに任せる）
-function legalMovesFor2(bd, hd, elim, moves, turnPlayer){
-  const alive = [0,1,2].filter(o=>!elim[o]);
-  if(alive.length !== 2) return moves;
-  return moves.filter(mv => {
-    const undo = applyMoveInPlace(bd, hd, elim, mv, turnPlayer);
-    const safe = undo.tryWin || !kingWouldBeCaptured(bd, turnPlayer, elim);
-    undoMoveInPlace(bd, hd, elim, mv, turnPlayer, undo);
-    return safe;
-  });
-}
-
 function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, pvArr=null, maxDepth=depth, t0=0, timeLimit=Infinity, callerPlayer=-1, callerAlpha=-Infinity, sliceRate=0){
 
   if(turnPlayer === -1 || elim.filter(e=>!e).length <= 1){
@@ -1755,11 +1747,6 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
       isHuman = turnPlayer === humanPlayer;
     }
     let moves = movesOnly(bd, hd, turnPlayer, elim);
-    // 2人局面：自殺手フィルタ → 詰みなら即返（3人時は素通し）
-    moves = legalMovesFor2(bd, hd, elim, moves, turnPlayer);
-    if(moves.length === 0 && [0,1,2].filter(o=>!elim[o]).length === 2){
-      return isHuman ? PV['OU'] : -PV['OU'];
-    }
     // ソート方針:
     //   depth=1 かつ sliceRate=0.0（末端直前の全探索）: ソート無意味→スキップ
     //   sliceRate < 0.9（10%超残す）: quickMoveScoreソート（αβ効率化）
@@ -1876,13 +1863,6 @@ function minimaxRound(bd, hd, elim, depth, alpha, beta, turnPlayer, rootAI=-1, p
   {
     const alive = [0,1,2].filter(o=>!elim[o]);
     let moves = movesOnly(bd, hd, turnPlayer, elim);
-    // 2人局面：自殺手フィルタ → 詰みなら大喜びスコアを即返（3人時は素通し）
-    moves = legalMovesFor2(bd, hd, elim, moves, turnPlayer);
-    if(moves.length === 0 && alive.length === 2){
-      const raw2 = {};
-      [0,1,2].forEach(o => raw2[o] = elim[o] ? -PV['OU'] : o===turnPlayer ? -PV['OU'] : PV['OU']);
-      return {raw: raw2, alive};
-    }
     // ソート方針:
     //   depth=1 かつ sliceRate=0.0（末端直前の全探索）: ソート無意味→スキップ
     //   sliceRate < 0.9（10%超残す）: quickMoveScoreソート（αβ効率化）
@@ -2901,6 +2881,30 @@ function setCpuCollusion(val){
   }
 }
 
+function setKeepAllPieces(val){
+  keepAllPieces = val;
+  const onBtn  = document.getElementById('keep-on');
+  const offBtn = document.getElementById('keep-off');
+  const desc   = document.getElementById('keep-rule-desc-main');
+  if(onBtn){
+    onBtn.style.background = val  ? '#004a00' : '#2a1200';
+    onBtn.style.border     = val  ? '1px solid #44ff88' : '1px solid #804010';
+    onBtn.style.color      = val  ? '#aaffcc' : '#c0a060';
+    onBtn.style.boxShadow  = val  ? '0 0 10px rgba(50,255,100,0.4)' : 'none';
+  }
+  if(offBtn){
+    offBtn.style.background = !val ? '#3a1a00' : '#2a1200';
+    offBtn.style.border     = !val ? '1px solid #ffaa44' : '1px solid #804010';
+    offBtn.style.color      = !val ? '#ffe090' : '#c0a060';
+    offBtn.style.boxShadow  = !val ? '0 0 10px rgba(255,170,50,0.4)' : 'none';
+  }
+  if(desc){
+    desc.innerHTML = val
+      ? '取った駒は<span class="highlight">常に持ち駒</span>になります。'
+      : '通常、取った駒は<span class="highlight">消滅</span>します。以下の場合のみ持ち駒になります。<ul style="margin:6px 0 0 16px;color:#b09070;font-size:12px;line-height:1.8;"><li><span class="highlight">脱落したプレイヤーがいる</span>とき</li><li><span class="highlight">成り駒</span>を取ったとき</li><li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li><li><span class="highlight">玉が5段目以上</span>に進んでいる相手から取ったとき</li></ul>';
+  }
+}
+
 function setDifficulty(level){
   const cfg = DIFFICULTY_LEVELS[level];
   if(!cfg) return;
@@ -2934,6 +2938,7 @@ window.addEventListener('DOMContentLoaded', () => {
   fitCanvas();
   setDifficulty(currentDifficulty);
   setCpuCollusion(false);
+  setKeepAllPieces(true);
   setHumanPlayer(0);
 });
 </script>
