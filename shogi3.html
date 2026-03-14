@@ -371,6 +371,7 @@ let cpuCollusion = false;
 let keepAllPieces = true; // 'all'=常に持ち駒、'next'=次のプレイヤーへ、false=消滅あり
 let gameGen = 0;
 let kifu = [];
+let kifuView = null; // null=現在局を表示、配列=閲覧中の古い棋譜
 
 // ── 自己対局モード ──
 let selfPlayMode  = false;
@@ -434,17 +435,22 @@ const VIEW_ROT = [0, Math.PI, Math.PI/2];
 function renderKifu(){
   const el=document.getElementById('kifu-list');
   if(!el) return;
-  // 自己対局中: ユーザーが上を見ているときは自動スクロールしない
-  const atBottom = !selfPlayMode || (el.scrollHeight - el.scrollTop - el.clientHeight < 40);
-  el.innerHTML=kifu.map((k,i)=>{
-    const cls=i===kifu.length-1?'latest':'';
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  // 最下部に戻ったら現在局の棋譜に切り替え
+  if(selfPlayMode && kifuView !== null && atBottom){
+    kifuView = null;
+  }
+  const displayKifu = (selfPlayMode && kifuView !== null) ? kifuView : kifu;
+  el.innerHTML=displayKifu.map((k,i)=>{
+    const cls=i===displayKifu.length-1?'latest':'';
     return '<div class="'+cls+'">'+
       '<span style="color:#806040;font-size:10px;">'+(i+1)+'.</span> '+
       '<span style="color:'+k.col+'">'+k.name+'</span> '+
       '<span style="color:#e8d095;">'+k.fugo+'</span>'+
       '</div>';
   }).join('');
-  if(atBottom) el.scrollTop=el.scrollHeight;
+  // 現在局表示中のみ自動スクロール
+  if(!selfPlayMode || (kifuView === null && atBottom)) el.scrollTop=el.scrollHeight;
 }
 
 function init(){
@@ -618,6 +624,11 @@ function startNextSelfPlay(){
   gover=false; winner=-1; moveCount=0; winType='normal';
   turn=0; lastMove=null; 
   humanEliminated=false; gameGen++;
+  // 最下部でなければ今の棋譜を保持して閲覧継続、最下部なら即クリア
+  const el=document.getElementById('kifu-list');
+  const atBottom = !el || (el.scrollHeight - el.scrollTop - el.clientHeight < 40);
+  if(!atBottom && kifu.length > 0) kifuView = kifu.slice();
+  else kifuView = null;
   kifu=[]; renderKifu(); render();
   setTimeout(()=>kickAI(), 0);
   watchSelfPlay(gameGen);
@@ -657,23 +668,8 @@ function watchSelfPlay(gen){
 }
 function waitAndStartNext(){
   if(!selfPlayMode) return;
-  if(isKifuAtBottom()){
-    setTimeout(()=>startNextSelfPlay(), 200);
-  } else {
-    // 棋譜を読み中 → 一番下にスクロールされるまで待機
-    document.getElementById('sp-status').textContent='📖 棋譜閲覧中... 最下部へスクロールで次局開始';
-    const el=document.getElementById('kifu-list');
-    if(el && !el._spListener){
-      el._spListener = ()=>{
-        if(isKifuAtBottom() && selfPlayMode){
-          el.removeEventListener('scroll', el._spListener);
-          el._spListener=null;
-          setTimeout(()=>startNextSelfPlay(), 200);
-        }
-      };
-      el.addEventListener('scroll', el._spListener);
-    }
-  }
+  // 棋譜位置に関わらず次局へ進む（棋譜閲覧中でも対局は継続）
+  setTimeout(()=>startNextSelfPlay(), 200);
 }
 function setHumanPlayer(p){
   humanPlayer=p; viewPlayer=p;
@@ -942,9 +938,10 @@ function applyMove(mv,o){
     }
     // 取り駒ルール適用
     if(keepAllPieces === 'next'){
-      // お裾分けモード：次のプレイヤーの持ち駒になる
-      const nextP = nextAliveOn(eliminated, o);
-      if(nextP !== -1) hand[nextP].push(cap.p);
+      // お裾分けモード：第三者の持ち駒になる（2人なら自分が受け取る）
+      const others = [0,1,2].filter(p => !eliminated[p] && p !== o && p !== cap.o);
+      const nextP = others.length > 0 ? others[0] : o;
+      hand[nextP].push(cap.p);
     } else if(eliminated[cap.o] || canKeep(o,cap.o,cap,board,hand,eliminated)){
       hand[o].push(cap.p);
     }
@@ -1013,8 +1010,9 @@ function applyMoveInPlace(bd, hd, elim, mv, o) {
   if (toCell) {
     let recipient = -1; // 持ち駒を受け取るプレイヤー（-1=消滅）
     if (keepAllPieces === 'next') {
-      // お裾分けモード：次のプレイヤーへ
-      recipient = nextAliveOn(elim, o);
+      // お裾分けモード：第三者へ（2人なら自分が受け取る＝普通将棋）
+      const others = [0,1,2].filter(p => !elim[p] && p !== o && p !== toCell.o);
+      recipient = others.length > 0 ? others[0] : o;
     } else if (keepAllPieces === 'all' || keepAllPieces === true) {
       recipient = o;
     } else {
@@ -2926,7 +2924,7 @@ function setKeepAllPieces(val){
     if(val === 'all' || val === true)
       desc.innerHTML = '取った駒は<span class="highlight">常に持ち駒</span>になります。';
     else if(val === 'next')
-      desc.innerHTML = '取った駒は<span class="highlight">次のプレイヤーの持ち駒</span>になります🎁';
+      desc.innerHTML = '取った駒は<span class="highlight">第三者の持ち駒</span>になります🎁（2人になったら取った側が受け取り）';
     else
       desc.innerHTML = '通常、取った駒は<span class="highlight">消滅</span>します。以下の場合のみ持ち駒になります。<ul style="margin:6px 0 0 16px;color:#b09070;font-size:12px;line-height:1.8;"><li><span class="highlight">脱落したプレイヤーがいる</span>とき</li><li><span class="highlight">成り駒</span>を取ったとき</li><li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li><li><span class="highlight">玉が5段目以上</span>に進んでいる相手から取ったとき</li></ul>';
   }
