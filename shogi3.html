@@ -239,7 +239,8 @@ button:hover { background: #5a2800; box-shadow: 0 0 10px rgba(128,64,16,0.5); }
       <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:100%;border-top:1px solid #503010;padding-top:8px;margin-top:4px;">
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:center;">
           <span style="color:#ffaa44;font-size:13px;letter-spacing:1px;">取り駒ルール：</span>
-          <button id="keep-on"  onclick="setKeepAllPieces(true)">♟ 常に持ち駒</button>
+          <button id="keep-on"  onclick="setKeepAllPieces('all')">♟ 常に持ち駒</button>
+          <button id="keep-next" onclick="setKeepAllPieces('next')">🎁 お裾分け</button>
           <button id="keep-off" onclick="setKeepAllPieces(false)">💨 消滅あり</button>
         </div>
       </div>
@@ -367,7 +368,7 @@ let viewPlayer  = 0;
 let humanPlayer = 0;
 let humanEliminated = false;
 let cpuCollusion = false;
-let keepAllPieces = true; // true=常に持ち駒（デフォルト）、false=消滅あり
+let keepAllPieces = true; // 'all'=常に持ち駒、'next'=次のプレイヤーへ、false=消滅あり
 let gameGen = 0;
 let kifu = [];
 
@@ -731,7 +732,8 @@ function toFugo(mv, o){
 // 修正後：引数で盤面状態を受け取れるようにする
 
 function canKeep(attackerO, victimO, victimPiece,bd,hd, elim){
-  if (keepAllPieces) return true;
+  if (keepAllPieces === 'all' || keepAllPieces === true) return true;
+  if (keepAllPieces === 'next') return false; // お裾分けモードは別処理
   if (elim.some(e=>e)) return true;
   if (victimPiece && victimPiece.pr) return true;
 
@@ -938,8 +940,14 @@ function applyMove(mv,o){
       render();
       return;
     }
-    // 特別ルール適用（脱落者の駒は無条件で拾える）
-    if(eliminated[cap.o] || canKeep(o,cap.o,cap,board,hand,eliminated)) hand[o].push(cap.p);
+    // 取り駒ルール適用
+    if(keepAllPieces === 'next'){
+      // お裾分けモード：次のプレイヤーの持ち駒になる
+      const nextP = nextAliveOn(eliminated, o);
+      if(nextP !== -1) hand[nextP].push(cap.p);
+    } else if(eliminated[cap.o] || canKeep(o,cap.o,cap,board,hand,eliminated)){
+      hand[o].push(cap.p);
+    }
     // else: 消える
   }
 
@@ -974,7 +982,7 @@ function applyMove(mv,o){
 // minimaxの内部ノードでボードコピーの代わりに使う
 // 戻り値のundoオブジェクトをundoMoveInPlaceに渡すと完全に元に戻る
 function applyMoveInPlace(bd, hd, elim, mv, o) {
-  const undo = {tryWin: false, entryWin: false, handAdded: null, handIdx: -1, elimIdx: -1, drop: mv.drop};
+  const undo = {tryWin: false, entryWin: false, handAdded: null, handAddedTo: -1, handIdx: -1, elimIdx: -1, drop: mv.drop};
 
   if (mv.drop) {
     const idx = hd[o].indexOf(mv.piece);
@@ -1001,31 +1009,42 @@ function applyMoveInPlace(bd, hd, elim, mv, o) {
     return undo;
   }
 
-  // 通常の取得：持ち駒に加えるか判定（simApplyと同じ条件）
+  // 通常の取得：持ち駒に加えるか判定
   if (toCell) {
-    let addToHand = false;
-    if (elim.some(e=>e)) {
-      addToHand = true; // 誰かが脱落済みなら無条件取得
-    } else if (toCell.pr) {
-      addToHand = true;
+    let recipient = -1; // 持ち駒を受け取るプレイヤー（-1=消滅）
+    if (keepAllPieces === 'next') {
+      // お裾分けモード：次のプレイヤーへ
+      recipient = nextAliveOn(elim, o);
+    } else if (keepAllPieces === 'all' || keepAllPieces === true) {
+      recipient = o;
     } else {
-      const [kr, kc] = findKingOn(bd, toCell.o);
-      if (kr !== -1) {
-        let isBeyondCenter = false;
-        if      (toCell.o === 0) isBeyondCenter = (kr <= 4);
-        else if (toCell.o === 1) isBeyondCenter = (kr >= 4);
-        else if (toCell.o === 2) isBeyondCenter = (kc <= 4);
-        if (isBeyondCenter) {
-          addToHand = true;
-        } else {
-          const diff = countPiecesOn(bd, hd, toCell.o) - countPiecesOn(bd, hd, o);
-          if (diff >= 3) addToHand = true;
+      // 消滅ありモード：条件判定
+      let addToHand = false;
+      if (elim.some(e=>e)) {
+        addToHand = true;
+      } else if (toCell.pr) {
+        addToHand = true;
+      } else {
+        const [kr, kc] = findKingOn(bd, toCell.o);
+        if (kr !== -1) {
+          let isBeyondCenter = false;
+          if      (toCell.o === 0) isBeyondCenter = (kr <= 4);
+          else if (toCell.o === 1) isBeyondCenter = (kr >= 4);
+          else if (toCell.o === 2) isBeyondCenter = (kc <= 4);
+          if (isBeyondCenter) {
+            addToHand = true;
+          } else {
+            const diff = countPiecesOn(bd, hd, toCell.o) - countPiecesOn(bd, hd, o);
+            if (diff >= 3) addToHand = true;
+          }
         }
       }
+      if (addToHand) recipient = o;
     }
-    if (addToHand) {
-      hd[o].push(toCell.p);
+    if (recipient >= 0) {
+      hd[recipient].push(toCell.p);
       undo.handAdded = toCell.p;
+      undo.handAddedTo = recipient;
     }
   }
 
@@ -1060,9 +1079,9 @@ function undoMoveInPlace(bd, hd, elim, mv, o, undo) {
   bd[mv.tr][mv.tc] = undo.toCell;
 
   // 持ち駒を元に戻す
-  if (undo.handAdded !== null) {
-    const idx = hd[o].lastIndexOf(undo.handAdded);
-    if (idx >= 0) hd[o].splice(idx, 1);
+  if (undo.handAdded !== null && undo.handAddedTo >= 0) {
+    const idx = hd[undo.handAddedTo].lastIndexOf(undo.handAdded);
+    if (idx >= 0) hd[undo.handAddedTo].splice(idx, 1);
   }
 
   // elimを元に戻す
@@ -2883,25 +2902,33 @@ function setCpuCollusion(val){
 
 function setKeepAllPieces(val){
   keepAllPieces = val;
-  const onBtn  = document.getElementById('keep-on');
-  const offBtn = document.getElementById('keep-off');
-  const desc   = document.getElementById('keep-rule-desc-main');
-  if(onBtn){
-    onBtn.style.background = val  ? '#004a00' : '#2a1200';
-    onBtn.style.border     = val  ? '1px solid #44ff88' : '1px solid #804010';
-    onBtn.style.color      = val  ? '#aaffcc' : '#c0a060';
-    onBtn.style.boxShadow  = val  ? '0 0 10px rgba(50,255,100,0.4)' : 'none';
-  }
-  if(offBtn){
-    offBtn.style.background = !val ? '#3a1a00' : '#2a1200';
-    offBtn.style.border     = !val ? '1px solid #ffaa44' : '1px solid #804010';
-    offBtn.style.color      = !val ? '#ffe090' : '#c0a060';
-    offBtn.style.boxShadow  = !val ? '0 0 10px rgba(255,170,50,0.4)' : 'none';
+  const onBtn   = document.getElementById('keep-on');
+  const nextBtn = document.getElementById('keep-next');
+  const offBtn  = document.getElementById('keep-off');
+  const desc    = document.getElementById('keep-rule-desc-main');
+  [['keep-on','all'],['keep-next','next'],['keep-off',false]].forEach(([id, v])=>{
+    const btn = document.getElementById(id);
+    if(!btn) return;
+    const active = val === v;
+    btn.style.background = active ? '#004a00' : '#2a1200';
+    btn.style.border     = active ? '1px solid #44ff88' : '1px solid #804010';
+    btn.style.color      = active ? '#aaffcc' : '#c0a060';
+    btn.style.boxShadow  = active ? '0 0 10px rgba(50,255,100,0.4)' : 'none';
+  });
+  // 消滅ありだけ色を変える
+  if(offBtn && val === false){
+    offBtn.style.background = '#3a1a00';
+    offBtn.style.border     = '1px solid #ffaa44';
+    offBtn.style.color      = '#ffe090';
+    offBtn.style.boxShadow  = '0 0 10px rgba(255,170,50,0.4)';
   }
   if(desc){
-    desc.innerHTML = val
-      ? '取った駒は<span class="highlight">常に持ち駒</span>になります。'
-      : '通常、取った駒は<span class="highlight">消滅</span>します。以下の場合のみ持ち駒になります。<ul style="margin:6px 0 0 16px;color:#b09070;font-size:12px;line-height:1.8;"><li><span class="highlight">脱落したプレイヤーがいる</span>とき</li><li><span class="highlight">成り駒</span>を取ったとき</li><li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li><li><span class="highlight">玉が5段目以上</span>に進んでいる相手から取ったとき</li></ul>';
+    if(val === 'all' || val === true)
+      desc.innerHTML = '取った駒は<span class="highlight">常に持ち駒</span>になります。';
+    else if(val === 'next')
+      desc.innerHTML = '取った駒は<span class="highlight">次のプレイヤーの持ち駒</span>になります🎁';
+    else
+      desc.innerHTML = '通常、取った駒は<span class="highlight">消滅</span>します。以下の場合のみ持ち駒になります。<ul style="margin:6px 0 0 16px;color:#b09070;font-size:12px;line-height:1.8;"><li><span class="highlight">脱落したプレイヤーがいる</span>とき</li><li><span class="highlight">成り駒</span>を取ったとき</li><li>相手より駒が<span class="highlight">3個以上少ない</span>とき</li><li><span class="highlight">玉が5段目以上</span>に進んでいる相手から取ったとき</li></ul>';
   }
 }
 
@@ -2938,7 +2965,7 @@ window.addEventListener('DOMContentLoaded', () => {
   fitCanvas();
   setDifficulty(currentDifficulty);
   setCpuCollusion(false);
-  setKeepAllPieces(true);
+  setKeepAllPieces('all');
   setHumanPlayer(0);
 });
 </script>
