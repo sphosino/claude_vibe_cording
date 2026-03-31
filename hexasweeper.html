@@ -16,6 +16,10 @@
     <button onclick="initGame()" style="padding: 0.5rem 1rem; border: 1px solid #0066cc; background: #0066cc; color: #fff; cursor: pointer; font-size: 14px;">New Game</button>
   </div>
 
+  <div style="font-size: 12px; color: #666; text-align: center; margin-bottom: 1rem;">
+    Left: Open | Right: Flag | Left+Right: Auto-reveal
+  </div>
+
   <svg id="board-svg" width="100%" viewBox="0 0 550 550" style="border: 1px solid #ddd; background: #fff;">
     <g id="board"></g>
   </svg>
@@ -32,6 +36,7 @@ let boardRadius = 3;
 let gameState = {};
 let gameOver = false;
 let firstClick = true;
+let mouseDownKeys = {};
 
 function hexCorners(cx, cy, size) {
   const points = [];
@@ -82,6 +87,7 @@ function initGame() {
   gameState = {};
   gameOver = false;
   firstClick = true;
+  mouseDownKeys = {};
   document.getElementById('message').textContent = '';
   
   const board = document.getElementById('board');
@@ -135,10 +141,46 @@ function initGame() {
           e.preventDefault();
           toggleFlag(key);
         };
+        poly.onmousedown = (e) => onMouseDown(e, key);
+        poly.onmouseup = (e) => onMouseUp(e, key);
         
         board.appendChild(g);
       }
     }
+  }
+}
+
+function onMouseDown(e, key) {
+  if (!mouseDownKeys[key]) mouseDownKeys[key] = {};
+  if (e.button === 0) mouseDownKeys[key].left = true;
+  if (e.button === 2) mouseDownKeys[key].right = true;
+  
+  if (mouseDownKeys[key].left && mouseDownKeys[key].right) {
+    e.preventDefault();
+    autoRevealAdjacent(key);
+  }
+}
+
+function onMouseUp(e, key) {
+  if (!mouseDownKeys[key]) return;
+  if (e.button === 0) mouseDownKeys[key].left = false;
+  if (e.button === 2) mouseDownKeys[key].right = false;
+}
+
+function autoRevealAdjacent(key) {
+  const cell = gameState[key];
+  if (!cell.revealed) return;
+  
+  const mineCount = countAdjacentMines(cell.q, cell.r);
+  const neighbors = getNeighbors(cell.q, cell.r);
+  const flagCount = neighbors.filter(n => gameState[n].flagged).length;
+  
+  if (flagCount === mineCount) {
+    neighbors.forEach(n => {
+      if (!gameState[n].revealed && !gameState[n].flagged) {
+        revealCell(n);
+      }
+    });
   }
 }
 
