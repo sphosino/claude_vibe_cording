@@ -1,0 +1,258 @@
+<html>
+<body style="margin: 0; padding: 1rem; font-family: sans-serif;">
+<div style="max-width: 650px; margin: 0 auto;">
+  <h2 style="text-align: center; margin-bottom: 1rem;">Hexasweeper</h2>
+  
+  <div style="display: flex; gap: 1rem; justify-content: center; margin-bottom: 1rem; flex-wrap: wrap;">
+    <button onclick="setDifficulty(0.1)" id="btn-easy" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 14px;">Easy</button>
+    <button onclick="setDifficulty(0.2)" id="btn-normal" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 14px;">Normal</button>
+    <button onclick="setDifficulty(0.3)" id="btn-hard" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 14px;">Hard</button>
+    <button onclick="initGame()" style="padding: 0.5rem 1rem; border: 1px solid #0066cc; background: #0066cc; color: #fff; cursor: pointer; font-size: 14px;">New Game</button>
+  </div>
+
+  <svg id="board-svg" width="100%" viewBox="0 0 600 600" style="border: 1px solid #ddd; background: #fff;">
+    <g id="board"></g>
+  </svg>
+  
+  <div id="message" style="text-align: center; margin-top: 1rem; font-size: 16px; font-weight: bold; min-height: 20px;"></div>
+</div>
+
+<script>
+const HEX_SIZE = 25;
+const axialNeighbors = [[1,0], [1,-1], [0,-1], [-1,0], [-1,1], [0,1]];
+
+let difficulty = 0.1;
+let gameState = {};
+let gameOver = false;
+let firstClick = true;
+
+function hexCorners(cx, cy, size) {
+  const points = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = Math.PI / 3 * i;
+    const x = cx + size * Math.cos(angle);
+    const y = cy + size * Math.sin(angle);
+    points.push([x, y]);
+  }
+  return points;
+}
+
+function getHexPos(q, r) {
+  const col = q;
+  const row = r + q / 2;
+  const x = HEX_SIZE * 1.75 * col + 300;
+  const y = HEX_SIZE * 1.5 * row + 300;
+  return { x, y };
+}
+
+function isValidCell(q, r) {
+  return Math.abs(q) <= 3 && Math.abs(r) <= 3 && Math.abs(q + r) <= 3;
+}
+
+function generateMines(totalCells, excludeQ, excludeR) {
+  const mines = new Set();
+  const mineCount = Math.ceil(totalCells * difficulty);
+  
+  while (mines.size < mineCount) {
+    const q = Math.floor(Math.random() * 7) - 3;
+    const r = Math.floor(Math.random() * 7) - 3;
+    const key = `${q},${r}`;
+    
+    if (!mines.has(key) && !(q === excludeQ && r === excludeR) && isValidCell(q, r)) {
+      mines.add(key);
+    }
+  }
+  return mines;
+}
+
+function initGame() {
+  gameState = {};
+  gameOver = false;
+  firstClick = true;
+  document.getElementById('message').textContent = '';
+  
+  const board = document.getElementById('board');
+  board.innerHTML = '';
+  
+  for (let q = -3; q <= 3; q++) {
+    for (let r = -3; r <= 3; r++) {
+      if (isValidCell(q, r)) {
+        const key = `${q},${r}`;
+        gameState[key] = { q, r, revealed: false, flagged: false, mine: false };
+        
+        const pos = getHexPos(q, r);
+        const corners = hexCorners(pos.x, pos.y, HEX_SIZE);
+        const pointsStr = corners.map(p => p.join(',')).join(' ');
+        
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('data-key', key);
+        
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        poly.setAttribute('points', pointsStr);
+        poly.setAttribute('fill', '#f0f0f0');
+        poly.setAttribute('stroke', '#ccc');
+        poly.setAttribute('stroke-width', '0.5');
+        poly.style.cursor = 'pointer';
+        
+        const mainText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        mainText.setAttribute('x', pos.x);
+        mainText.setAttribute('y', pos.y - 5);
+        mainText.setAttribute('text-anchor', 'middle');
+        mainText.setAttribute('font-size', '16');
+        mainText.setAttribute('font-weight', 'bold');
+        mainText.setAttribute('fill', '#333');
+        mainText.setAttribute('class', 'main-text');
+        mainText.setAttribute('pointer-events', 'none');
+        
+        const coordText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        coordText.setAttribute('x', pos.x);
+        coordText.setAttribute('y', pos.y + 8);
+        coordText.setAttribute('text-anchor', 'middle');
+        coordText.setAttribute('font-size', '10');
+        coordText.setAttribute('fill', '#999');
+        coordText.setAttribute('pointer-events', 'none');
+        coordText.textContent = `(${q},${r})`;
+        
+        g.appendChild(poly);
+        g.appendChild(mainText);
+        g.appendChild(coordText);
+        
+        poly.onclick = () => revealCell(key);
+        poly.oncontextmenu = (e) => {
+          e.preventDefault();
+          toggleFlag(key);
+        };
+        
+        board.appendChild(g);
+      }
+    }
+  }
+}
+
+function setDifficulty(d) {
+  difficulty = d;
+  document.querySelectorAll('[id^="btn-"]').forEach(b => b.style.background = '#fff');
+  if (d === 0.1) document.getElementById('btn-easy').style.background = '#cce5ff';
+  if (d === 0.2) document.getElementById('btn-normal').style.background = '#cce5ff';
+  if (d === 0.3) document.getElementById('btn-hard').style.background = '#cce5ff';
+  initGame();
+}
+
+function toggleFlag(key) {
+  if (gameOver) return;
+  const cell = gameState[key];
+  if (!cell.revealed) {
+    cell.flagged = !cell.flagged;
+    updateDisplay(key);
+  }
+}
+
+function revealCell(key) {
+  if (gameOver) return;
+  const cell = gameState[key];
+  if (cell.revealed || cell.flagged) return;
+  
+  if (firstClick) {
+    firstClick = false;
+    cell.mine = false;
+    const totalCells = Object.keys(gameState).length;
+    const mines = generateMines(totalCells, cell.q, cell.r);
+    mines.forEach(mineKey => {
+      gameState[mineKey].mine = true;
+    });
+  }
+  
+  if (cell.mine) {
+    gameOver = true;
+    revealAll();
+    document.getElementById('message').textContent = '💥 Game Over!';
+    return;
+  }
+  
+  const toReveal = new Set([key]);
+  
+  while (toReveal.size > 0) {
+    const currentKey = toReveal.values().next().value;
+    toReveal.delete(currentKey);
+    
+    const currentCell = gameState[currentKey];
+    if (currentCell.revealed) continue;
+    
+    currentCell.revealed = true;
+    updateDisplay(currentKey);
+    
+    const adjCount = countAdjacentMines(currentCell.q, currentCell.r);
+    if (adjCount === 0) {
+      getNeighbors(currentCell.q, currentCell.r).forEach(neighbor => {
+        if (!gameState[neighbor].revealed && !gameState[neighbor].mine) {
+          toReveal.add(neighbor);
+        }
+      });
+    }
+  }
+  
+  checkWin();
+}
+
+function countAdjacentMines(q, r) {
+  return getNeighbors(q, r).reduce((count, key) => {
+    return count + (gameState[key].mine ? 1 : 0);
+  }, 0);
+}
+
+function getNeighbors(q, r) {
+  return axialNeighbors
+    .map(([dq, dr]) => `${q + dq},${r + dr}`)
+    .filter(key => gameState[key]);
+}
+
+function updateDisplay(key) {
+  const g = document.querySelector(`[data-key="${key}"]`);
+  const poly = g.querySelector('polygon');
+  const mainText = g.querySelector('.main-text');
+  const cell = gameState[key];
+  
+  if (!cell.revealed) {
+    poly.setAttribute('fill', '#f0f0f0');
+    mainText.textContent = cell.flagged ? '🚩' : '';
+  } else {
+    poly.setAttribute('fill', '#fff');
+    poly.setAttribute('stroke', '#999');
+    if (cell.mine) {
+      poly.setAttribute('fill', '#ffb3b3');
+      mainText.textContent = '💣';
+    } else {
+      const count = countAdjacentMines(cell.q, cell.r);
+      if (count > 0) {
+        mainText.textContent = count;
+        const colors = ['', '#0066ff', '#00aa00', '#cc0000', '#6600cc', '#ff6600', '#006666'];
+        mainText.setAttribute('fill', colors[count]);
+      }
+    }
+  }
+}
+
+function revealAll() {
+  Object.entries(gameState).forEach(([key, cell]) => {
+    if (!cell.revealed) {
+      cell.revealed = true;
+      updateDisplay(key);
+    }
+  });
+}
+
+function checkWin() {
+  const nonMines = Object.values(gameState).filter(c => !c.mine);
+  const allRevealed = nonMines.every(c => c.revealed);
+  
+  if (allRevealed) {
+    gameOver = true;
+    document.getElementById('message').textContent = '🎉 You won!';
+  }
+}
+
+initGame();
+document.getElementById('btn-easy').style.background = '#cce5ff';
+</script>
+</body>
+</html>
