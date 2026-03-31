@@ -1,16 +1,22 @@
 <html>
 <body style="margin: 0; padding: 1rem; font-family: sans-serif;">
-<div style="max-width: 650px; margin: 0 auto;">
+<div style="max-width: 550px; margin: 0 auto;">
   <h2 style="text-align: center; margin-bottom: 1rem;">Hexasweeper</h2>
   
   <div style="display: flex; gap: 1rem; justify-content: center; margin-bottom: 1rem; flex-wrap: wrap;">
     <button onclick="setDifficulty(0.1)" id="btn-easy" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 14px;">Easy</button>
     <button onclick="setDifficulty(0.2)" id="btn-normal" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 14px;">Normal</button>
     <button onclick="setDifficulty(0.3)" id="btn-hard" style="padding: 0.5rem 1rem; border: 1px solid #ccc; background: #fff; cursor: pointer; font-size: 14px;">Hard</button>
+  </div>
+
+  <div style="display: flex; gap: 1rem; justify-content: center; margin-bottom: 1rem; align-items: center;">
+    <label style="font-size: 14px;">Board size:</label>
+    <input type="range" id="size-slider" min="1" max="5" value="3" style="width: 120px;" onchange="changeBoardSize()">
+    <span id="size-display" style="font-size: 14px; min-width: 30px;">3</span>
     <button onclick="initGame()" style="padding: 0.5rem 1rem; border: 1px solid #0066cc; background: #0066cc; color: #fff; cursor: pointer; font-size: 14px;">New Game</button>
   </div>
 
-  <svg id="board-svg" width="100%" viewBox="0 0 600 600" style="border: 1px solid #ddd; background: #fff;">
+  <svg id="board-svg" width="100%" viewBox="0 0 550 550" style="border: 1px solid #ddd; background: #fff;">
     <g id="board"></g>
   </svg>
   
@@ -22,6 +28,7 @@ const HEX_SIZE = 25;
 const axialNeighbors = [[1,0], [1,-1], [0,-1], [-1,0], [-1,1], [0,1]];
 
 let difficulty = 0.1;
+let boardRadius = 3;
 let gameState = {};
 let gameOver = false;
 let firstClick = true;
@@ -40,13 +47,13 @@ function hexCorners(cx, cy, size) {
 function getHexPos(q, r) {
   const col = q;
   const row = r + q / 2;
-  const x = HEX_SIZE * 1.75 * col + 300;
-  const y = HEX_SIZE * 1.5 * row + 300;
+  const x = HEX_SIZE * 1.75 * col + 275;
+  const y = HEX_SIZE * 1.5 * row + 275;
   return { x, y };
 }
 
 function isValidCell(q, r) {
-  return Math.abs(q) <= 3 && Math.abs(r) <= 3 && Math.abs(q + r) <= 3;
+  return Math.abs(q) <= boardRadius && Math.abs(r) <= boardRadius && Math.abs(q + r) <= boardRadius;
 }
 
 function generateMines(totalCells, excludeQ, excludeR) {
@@ -54,8 +61,8 @@ function generateMines(totalCells, excludeQ, excludeR) {
   const mineCount = Math.ceil(totalCells * difficulty);
   
   while (mines.size < mineCount) {
-    const q = Math.floor(Math.random() * 7) - 3;
-    const r = Math.floor(Math.random() * 7) - 3;
+    const q = Math.floor(Math.random() * (boardRadius * 2 + 1)) - boardRadius;
+    const r = Math.floor(Math.random() * (boardRadius * 2 + 1)) - boardRadius;
     const key = `${q},${r}`;
     
     if (!mines.has(key) && !(q === excludeQ && r === excludeR) && isValidCell(q, r)) {
@@ -63,6 +70,12 @@ function generateMines(totalCells, excludeQ, excludeR) {
     }
   }
   return mines;
+}
+
+function changeBoardSize() {
+  boardRadius = parseInt(document.getElementById('size-slider').value);
+  document.getElementById('size-display').textContent = boardRadius;
+  initGame();
 }
 
 function initGame() {
@@ -74,8 +87,8 @@ function initGame() {
   const board = document.getElementById('board');
   board.innerHTML = '';
   
-  for (let q = -3; q <= 3; q++) {
-    for (let r = -3; r <= 3; r++) {
+  for (let q = -boardRadius; q <= boardRadius; q++) {
+    for (let r = -boardRadius; r <= boardRadius; r++) {
       if (isValidCell(q, r)) {
         const key = `${q},${r}`;
         gameState[key] = { q, r, revealed: false, flagged: false, mine: false };
@@ -243,7 +256,7 @@ function revealAll() {
 
 function checkWin() {
   const nonMines = Object.values(gameState).filter(c => !c.mine);
-  const allRevealed = nonMines.every(c => c.revealed);
+  const allRevealed = nonMines.every(c => c.revealed || c.flagged);
   
   if (allRevealed) {
     gameOver = true;
