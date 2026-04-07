@@ -38,6 +38,14 @@ let gameOver = false;
 let firstClick = true;
 let mouseDownKeys = {};
 
+window.debugShowCoords = false;
+window.setDebugShowCoords = function(value) {
+  window.debugShowCoords = Boolean(value);
+  document.querySelectorAll('.coord-text').forEach(el => {
+    el.style.display = window.debugShowCoords ? 'block' : 'none';
+  });
+};
+
 function hexCorners(cx, cy, size) {
   const points = [];
   for (let i = 0; i < 6; i++) {
@@ -52,8 +60,8 @@ function hexCorners(cx, cy, size) {
 function getHexPos(q, r) {
   const col = q;
   const row = r + q / 2;
-  const x = HEX_SIZE * 1.60 * col + 275;
-  const y = HEX_SIZE * 1.70 * row + 275;
+  const x = HEX_SIZE * 1.55 * col + 275;
+  const y = HEX_SIZE * 1.80 * row + 275;
   return { x, y };
 }
 
@@ -109,8 +117,8 @@ function initGame() {
         const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
         poly.setAttribute('points', pointsStr);
         poly.setAttribute('fill', '#f0f0f0');
-        poly.setAttribute('stroke', '#ccc');
-        poly.setAttribute('stroke-width', '0.5');
+        poly.setAttribute('stroke', '#888');
+        poly.setAttribute('stroke-width', '1');
         poly.style.cursor = 'pointer';
         
         const mainText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -130,6 +138,8 @@ function initGame() {
         coordText.setAttribute('font-size', '10');
         coordText.setAttribute('fill', '#999');
         coordText.setAttribute('pointer-events', 'none');
+        coordText.setAttribute('class', 'coord-text');
+        coordText.style.display = window.debugShowCoords ? 'block' : 'none';
         coordText.textContent = `(${q},${r})`;
         
         g.appendChild(poly);
@@ -272,7 +282,8 @@ function updateDisplay(key) {
     mainText.textContent = cell.flagged ? '🚩' : '';
   } else {
     poly.setAttribute('fill', '#fff');
-    poly.setAttribute('stroke', '#999');
+    poly.setAttribute('stroke', '#666');
+    poly.setAttribute('stroke-width', '1');
     if (cell.mine) {
       poly.setAttribute('fill', '#ffb3b3');
       mainText.textContent = '💣';
