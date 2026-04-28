@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>ストリートファイター6 トレーニングツール v8.0</title>
+
+<style>
+:root{
+ --color-background-primary:#ffffff;
+ --color-background-secondary:#f8f9fa;
+ --color-background-info:#e3f2fd;
+ --color-text-primary:#1a1a1a;
+ --color-text-secondary:#4a4a4a;
+ --color-text-tertiary:#6c757d;
+ --color-text-info:#0d47a1;
+ --color-border-secondary:#dee2e6;
+ --color-border-tertiary:#e9ecef;
+ --color-border-info:#90caf9;
+ --border-radius-md:8px;
+ --border-radius-lg:12px;
+ --font-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+ --font-mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{
+ background:var(--color-background-primary);
+ color:var(--color-text-primary);
+ line-height:1.5;
+}
+
+.wrapper{
+ max-width:600px;
+ margin:0 auto;
+ padding:1.5rem;
+ font-family:var(--font-sans);
+}
+
+/* キャラ選択 */
+.char-section{margin-bottom:1.5rem}
+
+.char-label{
+ font-size:12px;
+ font-weight:700;
+ letter-spacing:0.05em;
+ color:var(--color-text-tertiary);
+ margin-bottom:8px;
+}
+
+.char-filter{
+ display:flex;
+ flex-wrap:wrap;
+ gap:6px;
+}
+
+.char-btn{
+ font-size:13px;
+ padding:6px 14px;
+ border-radius:var(--border-radius-md);
+ cursor:pointer;
+ border:2px solid var(--color-border-tertiary);
+ background:var(--color-background-secondary);
+ color:var(--color-text-tertiary);
+ opacity:.6;
+}
+
+.char-btn.active{
+ border-color:#ce93d8;
+ background:#f3e5f5;
+ color:#6a1b9a;
+ opacity:1;
+ font-weight:700;
+}
+
+.controls{
+ display:flex;
+ flex-wrap:wrap;
+ gap:12px;
+ align-items:center;
+ margin-bottom:1.5rem;
+}
+
+.ctrl-group{
+ display:flex;
+ align-items:center;
+ gap:8px;
+}
+
+.ctrl-group label{
+ font-size:13px;
+ color:var(--color-text-secondary);
+}
+
+.speed-val{
+ font-size:13px;
+ font-weight:500;
+ min-width:36px;
+}
+
+.btn{
+ font-size:14px;
+ padding:8px 16px;
+ border-radius:var(--border-radius-md);
+ cursor:pointer;
+ border:0.5px solid var(--color-border-secondary);
+ background:transparent;
+}
+
+.btn.primary{
+ background:var(--color-background-info);
+ color:var(--color-text-info);
+ border-color:var(--color-border-info);
+ font-weight:600;
+}
+
+.cat-section{margin-bottom:1.25rem}
+
+.cat-label{
+ font-size:12px;
+ font-weight:700;
+ letter-spacing:0.05em;
+ color:var(--color-text-tertiary);
+ margin-bottom:8px;
+}
+
+.cat-filter{
+ display:flex;
+ flex-wrap:wrap;
+ gap:6px;
+}
+
+.cat-wrap{
+ position:relative;
+}
+
+.cat-btn{
+ font-size:13px;
+ padding:6px 14px;
+ border-radius:var(--border-radius-md);
+ cursor:pointer;
+ border:2px solid var(--color-border-tertiary);
+ background:var(--color-background-secondary);
+ color:var(--color-text-tertiary);
+ opacity:.6;
+}
+
+.cat-btn.active{
+ border-color:var(--color-border-info);
+ background:var(--color-background-info);
+ color:var(--color-text-info);
+ opacity:1;
+ font-weight:600;
+}
+
+.cat-btn.hit-high.active{border-color:#ffb74d;background:#fff3e0;color:#e65100}
+.cat-btn.hit-mid.active{border-color:#4fc3f7;background:#e1f5fe;color:#01579b}
+.cat-btn.hit-low.active{border-color:#81c784;background:#e8f5e9;color:#1b5e20}
+
+.popup{
+ display:none;
+ position:absolute;
+ top:calc(100% + 6px);
+ left:0;
+ z-index:100;
+ background:#fff;
+ border:1px solid var(--color-border-secondary);
+ border-radius:var(--border-radius-lg);
+ padding:12px;
+ min-width:240px;
+ box-shadow:0 4px 12px rgba(0,0,0,0.1);
+}
+
+.cat-wrap:hover .popup{display:block}
+
+.popup-title{
+ font-size:11px;
+ font-weight:700;
+ color:var(--color-text-tertiary);
+ margin-bottom:8px;
+ border-bottom:1px solid var(--color-border-tertiary);
+ padding-bottom:4px;
+}
+
+.popup-move{
+ display:flex;
+ justify-content:space-between;
+ gap:12px;
+ padding:4px 0;
+ border-bottom:0.5px solid var(--color-border-tertiary);
+}
+
+.popup-move:last-child{border-bottom:none}
+
+.popup-move-name{font-size:12px}
+.popup-move-cmd{font-size:11px;font-family:var(--font-mono)}
+
+.stage{
+ background:var(--color-background-secondary);
+ border:1px solid var(--color-border-tertiary);
+ border-radius:var(--border-radius-lg);
+ padding:2.5rem 1.5rem;
+ text-align:center;
+ min-height:200px;
+ display:flex;
+ flex-direction:column;
+ align-items:center;
+ justify-content:center;
+ gap:1rem;
+ margin-bottom:1rem;
+}
+
+.move-name{font-size:48px;font-weight:700}
+
+.move-cmd{
+ font-size:20px;
+ font-family:var(--font-mono);
+ background:#eee;
+ padding:4px 12px;
+ border-radius:4px;
+}
+
+.move-cmd.hidden{opacity:0}
+
+.move-hit{
+ font-size:14px;
+ font-weight:700;
+ padding:4px 12px;
+ border-radius:6px;
+ background:var(--color-border-tertiary);
+}
+
+.move-hit.high{background:#fff3e0;color:#e65100}
+.move-hit.mid{background:#e1f5fe;color:#01579b}
+.move-hit.low{background:#e8f5e9;color:#1b5e20}
+.move-hit.throw{background:#f3e5f5;color:#6a1b9a}
+
+.move-hit.hidden{opacity:0}
+
+.progress-bar{
+ width:100%;
+ height:4px;
+ background:var(--color-border-tertiary);
+ border-radius:2px;
+ overflow:hidden;
+ margin-bottom:1.5rem;
+}
+
+.progress-fill{
+ height:100%;
+ width:0%;
+ background:#2196f3;
+ transition:width linear;
+}
+
+.bottom-row{
+ display:flex;
+ justify-content:space-between;
+ align-items:center;
+ flex-wrap:wrap;
+ gap:8px;
+ border-top:1px solid var(--color-border-tertiary);
+ padding-top:1rem;
+}
+
+.status{
+ font-size:13px;
+ color:var(--color-text-tertiary);
+}
+
+.toggles{
+ display:flex;
+ gap:8px;
+}
+
+.toggle-btn{
+ font-size:13px;
+ padding:6px 14px;
+ border-radius:var(--border-radius-md);
+ border:1px solid var(--color-border-secondary);
+ cursor:pointer;
+ background:transparent;
+}
+</style>
+</head>
+
+<body>
+<div class="wrapper">
+
+<!-- キャラ選択 -->
+<div class="char-section">
+ <div class="char-label">キャラクター</div>
+ <div class="char-filter" id="charFilter"></div>
+</div>
+
+<!-- 速度・操作 -->
+<div class="controls">
+ <div class="ctrl-group">
+  <label>速度</label>
+  <input type="range" id="speed" min="2" max="15" value="10">
+  <span id="speed-val">10秒</span>
+ </div>
+ <button class="btn primary" id="startBtn" onclick="toggleRun()">▶ スタート</button>
+ <button class="btn" onclick="nextMove()">次へ</button>
+</div>
+
+<!-- フィルター -->
+<div class="cat-section">
+ <div class="cat-label">攻撃判定カテゴリ</div>
+ <div class="cat-filter" id="hitFilter"></div>
+</div>
+
+<div class="cat-section">
+ <div class="cat-label">技種別カテゴリ</div>
+ <div class="cat-filter" id="catFilter"></div>
+</div>
+
+<div class="cat-section">
+ <div class="cat-label">用途カテゴリ</div>
+ <div class="cat-filter" id="roleFilter"></div>
+</div>
+
+<!-- ステージ -->
+<div class="stage">
+ <div id="moveName" class="move-name">スタートボタンで開始</div>
+ <div id="moveCmd" class="move-cmd">—</div>
+ <div id="moveHit" class="move-hit">—</div>
+</div>
+
+<div class="progress-bar"><div id="progFill" class="progress-fill"></div></div>
+
+<div class="bottom-row">
+ <div id="status" class="status"></div>
+ <div class="toggles">
+  <button class="toggle-btn" id="hitToggle" onclick="toggleHit()">判定表示: ON</button>
+  <button class="toggle-btn" id="cmdToggle" onclick="toggleCmd()">コマンド表示: ON</button>
+ </div>
+</div>
+
+</div>
+
+<script>
+
+// ===== キャラクターデータ =====
+// h: 上/中/下/投  cat: 通常技/特殊技/必殺技/投げ技  r: 用途
+
+const CHAR_DATA = {
+
+"春麗": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"追突拳",c:"→ + MP",cat:"特殊技",h:"上",r:"けん制"},
+ {n:"発勁",c:"← + HP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"水蓮掌",c:"↘ + HP",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"翼旋脚",c:"→ + HK",cat:"特殊技",h:"上",r:"けん制"},
+ {n:"鶴脚落",c:"↙ + HK",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"蘭華",c:"行雲流水中 + LP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"這蛇突",c:"行雲流水中 + MP",cat:"特殊技",h:"下",r:"崩し"},
+ {n:"蓮掌",c:"行雲流水中 + HP",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"前突",c:"行雲流水中 + LK",cat:"特殊技",h:"下",r:"崩し"},
+ {n:"仙風",c:"行雲流水中 + MK",cat:"特殊技",h:"下",r:"けん制"},
+ {n:"天空脚",c:"行雲流水中 + HK",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"気功拳",c:"←溜め→ + P",cat:"必殺技",h:"上",r:"飛び道具"},
+ {n:"百裂脚",c:"↓↘→ + K",cat:"必殺技",h:"上",r:"コンボ"},
+ {n:"空中百裂脚",c:"空中↓↘→ + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"スピニングバードキック",c:"↓溜め↑ + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"覇山蹴",c:"↓↙← + K",cat:"必殺技",h:"中",r:"突進技"},
+ {n:"天昇脚",c:"↓↓ + K",cat:"必殺技",h:"上",r:"対空"},
+ {n:"虎襲倒",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+ {n:"太極扇",c:"空中LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+],
+
+"リュウ": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"けん制"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"鎖骨割り",c:"→ + MP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"太刀割り",c:"↓ + MK (立ち時)",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"波動拳",c:"↓↘→ + P",cat:"必殺技",h:"上",r:"飛び道具"},
+ {n:"昇龍拳",c:"→↓↘ + P",cat:"必殺技",h:"上",r:"対空"},
+ {n:"竜巻旋風脚",c:"↓↙← + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"大足払い（必殺）",c:"↓↙← + HK",cat:"必殺技",h:"下",r:"崩し"},
+ {n:"柔道投げ",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+ {n:"巴投げ",c:"← + LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+],
+
+"ケン": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"けん制"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"斬空拳",c:"→ + MP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"ジャンピングニー",c:"→ + MK",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"波動拳",c:"↓↘→ + P",cat:"必殺技",h:"上",r:"飛び道具"},
+ {n:"昇龍拳",c:"→↓↘ + P",cat:"必殺技",h:"上",r:"対空"},
+ {n:"竜巻旋風脚",c:"↓↙← + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"疾風迅雷脚",c:"↓↘→ + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"一本背負い",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+ {n:"巴投げ",c:"← + LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+],
+
+"ガイル": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"けん制"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"ニーバズーカ",c:"→ + MK",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"ミリタリーターン",c:"← + HK",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"ソニックブーム",c:"←溜め→ + P",cat:"必殺技",h:"上",r:"飛び道具"},
+ {n:"サマーソルトキック",c:"↓溜め↑ + K",cat:"必殺技",h:"上",r:"対空"},
+ {n:"スピンナックル",c:"←溜め→ + P (空中)",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"フラッシュキック（地上）",c:"↓溜め↑ + K (地上)",cat:"必殺技",h:"上",r:"けん制"},
+ {n:"サプレックス",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+ {n:"ジャーマン",c:"← + LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+],
+
+"キャミィ": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"けん制"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"フランケンシュタイナー",c:"→ + MK",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"バックナックル",c:"→ + HP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"スパイラルアロー",c:"↓↘→ + K",cat:"必殺技",h:"下",r:"突進技"},
+ {n:"キャノンスパイク",c:"→↓↘ + K",cat:"必殺技",h:"上",r:"対空"},
+ {n:"クイックスピンナックル",c:"↓↙← + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"ハムストリング",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+ {n:"キャノンストライク（空中）",c:"空中↓↘→ + K",cat:"必殺技",h:"上",r:"突進技"},
+],
+
+"ジュリ": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"けん制"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"カウンターショット",c:"→ + MP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"エアウォーク",c:"↘ + HK",cat:"特殊技",h:"中",r:"崩し"},
+ {n:"風水エンジン（貯め）",c:"↓↘→ + K",cat:"必殺技",h:"上",r:"コンボ"},
+ {n:"扇刃蹴",c:"↓↙← + K",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"天穿蹴",c:"↓↓ + K",cat:"必殺技",h:"上",r:"対空"},
+ {n:"螺旋蹴",c:"↓↙← + P",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"ロールスロー",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+],
+
+"ルーク": [
+ {n:"小P（LP）",c:"LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中P（MP）",c:"MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"大P（HP）",c:"HP",cat:"通常技",h:"上",r:"けん制"},
+ {n:"小K（LK）",c:"LK",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"中K（MK）",c:"MK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"大K（HK）",c:"HK",cat:"通常技",h:"上",r:"けん制"},
+ {n:"屈小P",c:"↓ + LP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈中P",c:"↓ + MP",cat:"通常技",h:"上",r:"コンボ"},
+ {n:"屈大P",c:"↓ + HP",cat:"通常技",h:"上",r:"対空"},
+ {n:"屈小K",c:"↓ + LK",cat:"通常技",h:"下",r:"コンボ"},
+ {n:"屈中K",c:"↓ + MK",cat:"通常技",h:"下",r:"けん制"},
+ {n:"屈大K",c:"↓ + HK",cat:"通常技",h:"下",r:"崩し"},
+ {n:"オーバーハンド",c:"→ + MP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"アッパーカット",c:"↘ + HP",cat:"特殊技",h:"上",r:"コンボ"},
+ {n:"エクスプロージョン",c:"↓↙← + P",cat:"必殺技",h:"中",r:"崩し"},
+ {n:"サンドブラスト",c:"↓↘→ + P",cat:"必殺技",h:"上",r:"飛び道具"},
+ {n:"フラッシュナックル",c:"↓↘→ + P (溜め)",cat:"必殺技",h:"上",r:"突進技"},
+ {n:"ライジングアッパー",c:"→↓↘ + P",cat:"必殺技",h:"上",r:"対空"},
+ {n:"サプレックス",c:"LP + LK",cat:"投げ技",h:"投",r:"投げ"},
+],
+
+};
+
+// ===== 判定の表示名マッピング =====
+const HIT_LABEL = {"上":"上段","中":"中段","下":"下段","投":"投げ","他":"その他"};
+const HIT_CLASS = {"上":"high","中":"mid","下":"low","投":"throw","他":""};
+
+const CHARS = Object.keys(CHAR_DATA);
+const HITS  = ["上","中","下","投","他"];
+const ROLES = ["対空","飛び道具","けん制","突進技","崩し","コンボ","投げ"];
+
+let selectedChar = CHARS[0];
+let activeCats   = new Set();
+let activeHits   = new Set(HITS);
+let activeRoles  = new Set(ROLES);
+let running = false;
+let timer   = null;
+let showCmd = true;
+let showHit = true;
+
+function getCurrentMoves(){
+ return CHAR_DATA[selectedChar] || [];
+}
+
+function getCats(){
+ return [...new Set(getCurrentMoves().map(m=>m.cat))];
+}
+
+// ===== キャラ選択ボタン =====
+const charFilter = document.getElementById("charFilter");
+
+CHARS.forEach(char=>{
+ const btn = document.createElement("button");
+ btn.className = "char-btn" + (char===selectedChar?" active":"");
+ btn.textContent = char;
+ btn.onclick = ()=>{
+  selectedChar = char;
+  document.querySelectorAll(".char-btn").forEach(b=>b.classList.remove("active"));
+  btn.classList.add("active");
+  rebuildFilters();
+  updateStatus();
+  if(running){ clearInterval(timer); timer=setInterval(nextMove,getSpeed()); nextMove(); }
+ };
+ charFilter.appendChild(btn);
+});
+
+// ===== 判定フィルター =====
+const hitFilter = document.getElementById("hitFilter");
+
+HITS.forEach(h=>{
+ const wrap = document.createElement("div");
+ wrap.className = "cat-wrap";
+
+ const btn = document.createElement("button");
+ btn.className = "cat-btn active";
+ if(h==="上") btn.classList.add("hit-high");
+ if(h==="中") btn.classList.add("hit-mid");
+ if(h==="下") btn.classList.add("hit-low");
+ btn.textContent = HIT_LABEL[h];
+
+ btn.onclick=()=>{
+  if(activeHits.has(h)){
+   if(activeHits.size<=1)return;
+   activeHits.delete(h); btn.classList.remove("active");
+  }else{
+   activeHits.add(h); btn.classList.add("active");
+  }
+  updateStatus();
+ };
+
+ const popup = document.createElement("div");
+ popup.className = "popup";
+ const title = document.createElement("div");
+ title.className = "popup-title";
+ title.textContent = `${HIT_LABEL[h]} 一覧`;
+ popup.appendChild(title);
+ // リストはキャラ変更時に更新
+ popup.dataset.hit = h;
+
+ wrap.appendChild(btn);
+ wrap.appendChild(popup);
+ hitFilter.appendChild(wrap);
+});
+
+// ===== 技種別フィルター =====
+const catFilter = document.getElementById("catFilter");
+
+function rebuildCatFilter(){
+ catFilter.innerHTML = "";
+ const cats = getCats();
+ activeCats = new Set(cats);
+
+ cats.forEach(cat=>{
+  const wrap = document.createElement("div");
+  wrap.className = "cat-wrap";
+
+  const btn = document.createElement("button");
+  btn.className = "cat-btn active";
+  btn.textContent = cat;
+
+  btn.onclick=()=>{
+   if(activeCats.has(cat)){
+    if(activeCats.size<=1)return;
+    activeCats.delete(cat); btn.classList.remove("active");
+   }else{
+    activeCats.add(cat); btn.classList.add("active");
+   }
+   updateStatus();
+  };
+
+  const popup = document.createElement("div");
+  popup.className = "popup";
+  const title = document.createElement("div");
+  title.className = "popup-title";
+  title.textContent = `${cat} 一覧 (${getCurrentMoves().filter(m=>m.cat===cat).length})`;
+  popup.appendChild(title);
+  getCurrentMoves().filter(m=>m.cat===cat).forEach(m=>{
+   const row = document.createElement("div");
+   row.className = "popup-move";
+   row.innerHTML = `<span class="popup-move-name">${m.n}</span><span class="popup-move-cmd">${m.c}</span>`;
+   popup.appendChild(row);
+  });
+
+  wrap.appendChild(btn);
+  wrap.appendChild(popup);
+  catFilter.appendChild(wrap);
+ });
+}
+
+// ===== 用途フィルター =====
+const roleFilter = document.getElementById("roleFilter");
+
+ROLES.forEach(role=>{
+ const wrap = document.createElement("div");
+ wrap.className = "cat-wrap";
+
+ const btn = document.createElement("button");
+ btn.className = "cat-btn active";
+ btn.textContent = role;
+
+ btn.onclick=()=>{
+  if(activeRoles.has(role)){
+   if(activeRoles.size<=1)return;
+   activeRoles.delete(role); btn.classList.remove("active");
+  }else{
+   activeRoles.add(role); btn.classList.add("active");
+  }
+  updateStatus();
+ };
+
+ const popup = document.createElement("div");
+ popup.className = "popup";
+ popup.dataset.role = role;
+ const title = document.createElement("div");
+ title.className = "popup-title";
+ title.textContent = `${role} 一覧`;
+ popup.appendChild(title);
+
+ wrap.appendChild(btn);
+ wrap.appendChild(popup);
+ roleFilter.appendChild(wrap);
+});
+
+function rebuildFilters(){
+ rebuildCatFilter();
+ // 判定・用途ポップアップを更新
+ document.querySelectorAll(".popup[data-hit]").forEach(popup=>{
+  const h = popup.dataset.hit;
+  while(popup.children.length>1) popup.removeChild(popup.lastChild);
+  getCurrentMoves().filter(m=>m.h===h).forEach(m=>{
+   const row = document.createElement("div");
+   row.className = "popup-move";
+   row.innerHTML = `<span class="popup-move-name">${m.n}</span><span class="popup-move-cmd">${m.c}</span>`;
+   popup.appendChild(row);
+  });
+ });
+ document.querySelectorAll(".popup[data-role]").forEach(popup=>{
+  const role = popup.dataset.role;
+  while(popup.children.length>1) popup.removeChild(popup.lastChild);
+  getCurrentMoves().filter(m=>m.r===role).forEach(m=>{
+   const row = document.createElement("div");
+   row.className = "popup-move";
+   row.innerHTML = `<span class="popup-move-name">${m.n}</span><span class="popup-move-cmd">${m.c}</span>`;
+   popup.appendChild(row);
+  });
+ });
+}
+
+// ===== フィルタリング =====
+function getFiltered(){
+ return getCurrentMoves().filter(m=>
+  activeCats.has(m.cat) && activeHits.has(m.h) && activeRoles.has(m.r)
+ );
+}
+
+function updateStatus(){
+ document.getElementById("status").textContent =
+  `対象: ${getFiltered().length}技 / 全${getCurrentMoves().length}`;
+}
+
+// ===== 技表示 =====
+function showMove(move){
+ document.getElementById("moveName").textContent = move.n;
+
+ const cmdEl = document.getElementById("moveCmd");
+ cmdEl.textContent = move.c;
+ cmdEl.className = "move-cmd" + (showCmd ? "" : " hidden");
+
+ const hitEl = document.getElementById("moveHit");
+ hitEl.textContent = HIT_LABEL[move.h] || move.h;
+ hitEl.className = "move-hit " + (HIT_CLASS[move.h]||"") + (showHit ? "" : " hidden");
+}
+
+function nextMove(){
+ const list = getFiltered();
+ if(!list.length) return;
+ showMove(list[Math.floor(Math.random()*list.length)]);
+}
+
+// ===== 速度・操作 =====
+function getSpeed(){
+ return document.getElementById("speed").value * 1000;
+}
+
+function toggleRun(){
+ running = !running;
+ const btn = document.getElementById("startBtn");
+ if(running){
+  btn.textContent = "⏹ ストップ";
+  nextMove();
+  timer = setInterval(nextMove, getSpeed());
+ }else{
+  btn.textContent = "▶ スタート";
+  clearInterval(timer);
+ }
+}
+
+function toggleCmd(){
+ showCmd = !showCmd;
+ const el = document.getElementById("moveCmd");
+ el.className = "move-cmd" + (showCmd ? "" : " hidden");
+ document.getElementById("cmdToggle").textContent = "コマンド表示: " + (showCmd?"ON":"OFF");
+}
+
+function toggleHit(){
+ showHit = !showHit;
+ const el = document.getElementById("moveHit");
+ const cur = el.className.replace(" hidden","");
+ el.className = cur + (showHit ? "" : " hidden");
+ document.getElementById("hitToggle").textContent = "判定表示: " + (showHit?"ON":"OFF");
+}
+
+document.getElementById("speed").addEventListener("input",function(){
+ document.getElementById("speed-val").textContent = this.value + "秒";
+ if(running){ clearInterval(timer); timer = setInterval(nextMove, getSpeed()); }
+});
+
+// ===== 初期化 =====
+rebuildFilters();
+updateStatus();
+
+</script>
+</body>
+</html>
