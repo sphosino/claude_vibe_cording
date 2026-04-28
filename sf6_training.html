@@ -37,6 +37,40 @@ body{
  font-family:var(--font-sans);
 }
 
+.description{
+ background:var(--color-background-info);
+ border:1px solid var(--color-border-info);
+ border-radius:var(--border-radius-lg);
+ padding:1.25rem 1.5rem;
+ margin-bottom:1.5rem;
+}
+
+.desc-title{
+ font-size:16px;
+ font-weight:700;
+ color:var(--color-text-info);
+ margin-bottom:8px;
+}
+
+.description > p{
+ font-size:13px;
+ color:var(--color-text-secondary);
+ margin-bottom:12px;
+ line-height:1.7;
+}
+
+.desc-tips{
+ display:flex;
+ flex-direction:column;
+ gap:4px;
+}
+
+.desc-tip{
+ font-size:12px;
+ color:var(--color-text-secondary);
+ line-height:1.6;
+}
+
 /* キャラ選択 */
 .char-section{margin-bottom:1.5rem}
 
@@ -286,6 +320,21 @@ body{
 
 <body>
 <div class="wrapper">
+
+<!-- 説明 -->
+<div class="description">
+ <div class="desc-title">🎮 SF6 テクニカルトレーニングツール</div>
+ <p>ランダムに技が表示されるので、実際にゲームで入力して練習しましょう。<br>
+ フィルターで練習したい技の種類に絞り込み、速度を調整して自分のペースで特訓できます。</p>
+ <div class="desc-tips">
+  <div class="desc-tip">⚙️ <strong>速度</strong>…次の技が表示されるまでの時間（2〜15秒）</div>
+  <div class="desc-tip">🎯 <strong>判定フィルター</strong>…上段・中段・下段など攻撃属性で絞り込み</div>
+  <div class="desc-tip">📂 <strong>技種別フィルター</strong>…通常技・特殊技・必殺技・投げ技で絞り込み</div>
+  <div class="desc-tip">🗂️ <strong>用途フィルター</strong>…対空・崩し・けん制など用途で絞り込み</div>
+  <div class="desc-tip">👁️ <strong>コマンド表示 OFF</strong>…コマンドを隠して暗記テストに</div>
+  <div class="desc-tip">👁️ <strong>判定表示 OFF</strong>…判定を隠して反応練習に</div>
+ </div>
+</div>
 
 <!-- キャラ選択 -->
 <div class="char-section">
